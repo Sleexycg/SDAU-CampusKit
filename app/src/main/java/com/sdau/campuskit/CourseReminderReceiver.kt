@@ -108,7 +108,9 @@ private data class ReminderCourse(
 
 object CourseReminderScheduler {
     private const val PREFS_NAME = "offline_login"
+    private const val KEY_ACCOUNT = "account"
     private const val KEY_COURSES = "courses_cache"
+    private const val KEY_COURSES_PREFIX = "courses_cache_account"
     private const val KEY_CUSTOM_COURSES_PREFIX = "custom_courses_cache"
     private const val KEY_PUSH_ENABLED = "push_enabled"
     private const val KEY_TERM = "term"
@@ -126,11 +128,17 @@ object CourseReminderScheduler {
             cancel(applicationContext)
             return
         }
+        val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
         val term = preferences.getString(KEY_TERM, OFFICIAL_TERM).orEmpty().ifBlank { OFFICIAL_TERM }
-        val customKey = "${KEY_CUSTOM_COURSES_PREFIX}_${term.replace(Regex("[^A-Za-z0-9_-]"), "_")}" 
+        val imported = account.takeIf { it.isNotBlank() }
+            ?.let { preferences.getString(courseCacheKey(it, term), null) }
+            ?: preferences.getString(KEY_COURSES, null)
+        val custom = account.takeIf { it.isNotBlank() }
+            ?.let { preferences.getString(customCourseCacheKey(it, term), null) }
+            ?: preferences.getString(legacyCustomCourseCacheKey(term), null)
         val courses = loadCourses(
-            preferences.getString(KEY_COURSES, null),
-            preferences.getString(customKey, null)
+            imported,
+            custom
         )
         val next = findNextReminder(courses, term, Calendar.getInstance())
         cancel(applicationContext)
@@ -168,6 +176,21 @@ object CourseReminderScheduler {
         val triggerAt: Long,
         val timeLabel: String
     )
+
+    private fun courseCacheKey(account: String, term: String): String {
+        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        return "${KEY_COURSES_PREFIX}_${safeAccount}_$safeTerm"
+    }
+
+    private fun customCourseCacheKey(account: String, term: String): String {
+        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
+        return "${KEY_CUSTOM_COURSES_PREFIX}_${safeAccount}_$safeTerm"
+    }
+
+    private fun legacyCustomCourseCacheKey(term: String): String =
+        "${KEY_CUSTOM_COURSES_PREFIX}_${term.replace(Regex("[^A-Za-z0-9_-]"), "_")}"
 
     private fun findNextReminder(
         courses: List<ReminderCourse>,
