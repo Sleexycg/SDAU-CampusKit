@@ -1,7 +1,10 @@
 package com.sdau.campuskit
 
 import android.app.PendingIntent
+import android.app.job.JobInfo
+import android.app.job.JobParameters
 import android.app.job.JobScheduler
+import android.app.job.JobService
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.ComponentName
@@ -16,6 +19,7 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import kotlin.concurrent.thread
 
 private data class WidgetCourse(
     val day: Int,
@@ -38,7 +42,7 @@ private data class CourseOccurrence(
 class CourseWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
         appWidgetIds.forEach { updateResponsiveWidget(context, manager, it) }
-        cancelLegacyNetworkRefresh(context)
+        scheduleNetworkRefresh(context)
     }
 
     override fun onAppWidgetOptionsChanged(
@@ -60,10 +64,12 @@ class CourseWidgetProvider : AppWidgetProvider() {
         private const val WIDGET_REFRESH_JOB_ID = 4402
         private const val PREFS_NAME = "offline_login"
         private const val KEY_ACCOUNT = "account"
+        private const val KEY_PASSWORD = "password"
         private const val KEY_TERM = "term"
         private const val KEY_COURSES = "courses_cache"
-        private const val KEY_COURSES_PREFIX = "courses_cache_account"
         private const val KEY_CUSTOM_COURSES_PREFIX = "custom_courses_cache"
+        private const val KEY_WIDGET_LAST_NETWORK_REFRESH = "widget_last_network_refresh"
+        private const val WIDGET_NETWORK_REFRESH_INTERVAL = 24L * 60L * 60L * 1000L
         private const val OFFICIAL_TERM = "2026-2027-1"
         private const val OFFICIAL_TERM_START_YEAR = 2026
         private const val OFFICIAL_TERM_START_MONTH = Calendar.SEPTEMBER
@@ -144,6 +150,35 @@ class CourseWidgetProvider : AppWidgetProvider() {
                 effectiveHeight < 285 -> 4
                 else -> 5
             }
+        }
+
+        internal fun refreshCourseCache(context: Context): Boolean {
+            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
+            val password = preferences.getString(KEY_PASSWORD, "").orEmpty()
+            val term = preferences.getString(KEY_TERM, OFFICIAL_TERM).orEmpty().ifBlank { OFFICIAL_TERM }
+            if (account == "114514") return true
+            if (account.isBlank() || password.isBlank()) return false
+
+            val oldColors = loadCourses(context).associate { it.name to it.background }
+            val remote = SdauCourseRepository().queryCourses(account, password, term)
+            val rows = JSONArray()
+            remote.forEachIndexed { index, course ->
+                rows.put(JSONObject().apply {
+                    put("day", course.day)
+                    put("startSlot", course.startSlot)
+                    put("slotCount", course.slotCount)
+                    put("name", course.name)
+                    put("room", course.room)
+                    put("teacher", course.teacher)
+                    put("weeks", course.weeks)
+                    put("background", oldColors[course.name] ?: FALLBACK_COLORS[index % FALLBACK_COLORS.size])
+                    put("foreground", Color.WHITE)
+                })
+            }
+            preferences.edit().putString(KEY_COURSES, rows.toString()).apply()
+            CourseReminderScheduler.scheduleNext(context)
+            return true
         }
 
         private fun updateWidget(
@@ -287,16 +322,10 @@ class CourseWidgetProvider : AppWidgetProvider() {
         private fun loadCourses(context: Context): List<WidgetCourse> {
             val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val courses = mutableListOf<WidgetCourse>()
-            val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
             val term = preferences.getString(KEY_TERM, OFFICIAL_TERM).orEmpty().ifBlank { OFFICIAL_TERM }
-            val imported = account.takeIf { it.isNotBlank() }
-                ?.let { preferences.getString(courseCacheKey(it, term), null) }
-                ?: preferences.getString(KEY_COURSES, null)
-            val custom = account.takeIf { it.isNotBlank() }
-                ?.let { preferences.getString(customCourseCacheKey(it, term), null) }
-                ?: preferences.getString(legacyCustomCourseCacheKey(term), null)
-            listOf(imported, custom).forEach { raw ->
-                raw ?: return@forEach
+            val customKey = "${KEY_CUSTOM_COURSES_PREFIX}_${term.replace(Regex("[^A-Za-z0-9_-]"), "_")}" 
+            listOf(KEY_COURSES, customKey).forEach { key ->
+                val raw = preferences.getString(key, null) ?: return@forEach
                 runCatching {
                     val rows = JSONArray(raw)
                     for (index in 0 until rows.length()) {
@@ -316,21 +345,6 @@ class CourseWidgetProvider : AppWidgetProvider() {
             }
             return courses.filter { it.day in 0..6 && it.name.isNotBlank() }
         }
-
-        private fun courseCacheKey(account: String, term: String): String {
-            val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-            val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-            return "${KEY_COURSES_PREFIX}_${safeAccount}_$safeTerm"
-        }
-
-        private fun customCourseCacheKey(account: String, term: String): String {
-            val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-            val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-            return "${KEY_CUSTOM_COURSES_PREFIX}_${safeAccount}_$safeTerm"
-        }
-
-        private fun legacyCustomCourseCacheKey(term: String): String =
-            "${KEY_CUSTOM_COURSES_PREFIX}_${term.replace(Regex("[^A-Za-z0-9_-]"), "_")}"
 
         private fun courseVisibleInWeek(course: WidgetCourse, week: Int): Boolean {
             if (week <= 0) return false
@@ -380,9 +394,25 @@ class CourseWidgetProvider : AppWidgetProvider() {
             set(Calendar.MILLISECOND, 0)
         }
 
-        internal fun cancelLegacyNetworkRefresh(context: Context) {
+        internal fun scheduleNetworkRefresh(context: Context) {
             val scheduler = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler
-            scheduler.cancel(WIDGET_REFRESH_JOB_ID)
+            val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val lastRefresh = preferences.getLong(KEY_WIDGET_LAST_NETWORK_REFRESH, 0L)
+            val refreshAge = System.currentTimeMillis() - lastRefresh
+            if (refreshAge in 0 until WIDGET_NETWORK_REFRESH_INTERVAL) return
+            if (scheduler.getPendingJob(WIDGET_REFRESH_JOB_ID) != null) return
+            val job = JobInfo.Builder(WIDGET_REFRESH_JOB_ID, ComponentName(context, CourseWidgetRefreshJobService::class.java))
+                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                .setOverrideDeadline(0L)
+                .setBackoffCriteria(60L * 60L * 1000L, JobInfo.BACKOFF_POLICY_EXPONENTIAL)
+                .build()
+            scheduler.schedule(job)
+        }
+
+        internal fun recordNetworkRefreshAttempt(context: Context) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                .putLong(KEY_WIDGET_LAST_NETWORK_REFRESH, System.currentTimeMillis())
+                .apply()
         }
     }
 }
@@ -390,7 +420,7 @@ class CourseWidgetProvider : AppWidgetProvider() {
 class CompactCourseWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, manager: AppWidgetManager, appWidgetIds: IntArray) {
         appWidgetIds.forEach { CourseWidgetProvider.updateResponsiveWidget(context, manager, it) }
-        CourseWidgetProvider.cancelLegacyNetworkRefresh(context)
+        CourseWidgetProvider.scheduleNetworkRefresh(context)
     }
 
     override fun onAppWidgetOptionsChanged(
@@ -416,5 +446,61 @@ class CompactCourseWidgetProvider : AppWidgetProvider() {
                 CourseWidgetProvider.updateResponsiveWidget(context, manager, it)
             }
         }
+    }
+}
+
+class CourseWidgetRefreshJobService : JobService() {
+    private val workerLock = Any()
+    private var worker: Thread? = null
+    private var activeParams: JobParameters? = null
+
+    override fun onStartJob(params: JobParameters): Boolean {
+        val refreshThread = thread(name = "course-widget-refresh", start = false) {
+            val result = runCatching { CourseWidgetProvider.refreshCourseCache(applicationContext) }
+            val isStillActive = synchronized(workerLock) {
+                activeParams === params && worker === Thread.currentThread()
+            }
+            if (isStillActive && !Thread.currentThread().isInterrupted && result.isSuccess) {
+                CourseWidgetProvider.recordNetworkRefreshAttempt(applicationContext)
+                CourseWidgetProvider.updateAll(applicationContext)
+            }
+            val shouldFinish = synchronized(workerLock) {
+                if (activeParams === params && worker === Thread.currentThread()) {
+                    activeParams = null
+                    worker = null
+                    true
+                } else {
+                    false
+                }
+            }
+            if (shouldFinish) jobFinished(params, result.isFailure)
+        }
+        synchronized(workerLock) {
+            worker?.interrupt()
+            activeParams = params
+            worker = refreshThread
+        }
+        refreshThread.start()
+        return true
+    }
+
+    override fun onStopJob(params: JobParameters): Boolean {
+        synchronized(workerLock) {
+            if (activeParams === params) {
+                activeParams = null
+                worker?.interrupt()
+                worker = null
+            }
+        }
+        return true
+    }
+
+    override fun onDestroy() {
+        synchronized(workerLock) {
+            activeParams = null
+            worker?.interrupt()
+            worker = null
+        }
+        super.onDestroy()
     }
 }

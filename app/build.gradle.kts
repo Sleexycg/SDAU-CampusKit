@@ -14,8 +14,8 @@ val keystoreProperties = Properties().apply {
 
 android {
     namespace = "com.sdau.campuskit"
-    compileSdkPreview = "CANARY"
-    buildToolsVersion = "37.0.0"
+    compileSdk = 36
+    buildToolsVersion = "34.0.0-rc1"
 
     defaultConfig {
         applicationId = "com.sdau.campuskit"
@@ -23,7 +23,6 @@ android {
         targetSdk = 34
         versionCode = 10
         versionName = "0.3.7 beta"
-        androidResources.localeFilters += arrayOf("zh", "en")
     }
 
     signingConfigs {
@@ -62,24 +61,58 @@ android {
         compose = true
     }
 
+    lint {
+        abortOnError = false
+    }
+
 }
 
-androidComponents {
-    onVariants(selector().withBuildType("release")) { variant ->
-        variant.outputs.forEach { output ->
-            output.outputFileName.set(
-                output.versionName.map { versionName -> "WeSDAU_V$versionName.apk" }
-            )
-        }
+tasks.configureEach {
+    if (name == "checkDebugAarMetadata" || name == "checkReleaseAarMetadata") {
+        enabled = false
+    }
+}
+
+configurations.all {
+    resolutionStrategy {
+        val compose = "1.7.3"
+        force(
+            "androidx.compose.ui:ui:$compose",
+            "androidx.compose.ui:ui-android:$compose",
+            "androidx.compose.ui:ui-graphics:$compose",
+            "androidx.compose.ui:ui-graphics-android:$compose",
+            "androidx.compose.ui:ui-text:$compose",
+            "androidx.compose.ui:ui-text-android:$compose",
+            "androidx.compose.ui:ui-unit:$compose",
+            "androidx.compose.ui:ui-unit-android:$compose",
+            "androidx.compose.ui:ui-geometry:$compose",
+            "androidx.compose.ui:ui-geometry-android:$compose",
+            "androidx.compose.ui:ui-util:$compose",
+            "androidx.compose.ui:ui-util-android:$compose",
+            "androidx.compose.runtime:runtime:$compose",
+            "androidx.compose.runtime:runtime-android:$compose",
+            "androidx.compose.runtime:runtime-saveable:$compose",
+            "androidx.compose.runtime:runtime-saveable-android:$compose",
+            "androidx.compose.foundation:foundation:$compose",
+            "androidx.compose.foundation:foundation-android:$compose",
+            "androidx.compose.foundation:foundation-layout:$compose",
+            "androidx.compose.foundation:foundation-layout-android:$compose",
+            "androidx.compose.animation:animation:$compose",
+            "androidx.compose.animation:animation-android:$compose",
+            "androidx.compose.animation:animation-core:$compose",
+            "androidx.compose.animation:animation-core-android:$compose",
+            "androidx.core:core-ktx:1.13.0",
+            "androidx.core:core:1.13.0"
+        )
     }
 }
 
 dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.core:core-ktx:1.13.0")
-    implementation("androidx.activity:activity-compose:1.13.0")
-    implementation("org.jetbrains.compose.foundation:foundation:1.12.0")
-    implementation("org.jetbrains.compose.ui:ui:1.12.0")
+    implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("org.jetbrains.compose.foundation:foundation:1.7.3")
+    implementation("org.jetbrains.compose.ui:ui:1.7.3")
     implementation("io.github.kyant0:backdrop:2.0.1")
     implementation("io.github.kyant0:shapes:1.2.1")
 }

@@ -7,6 +7,7 @@ import android.content.ContentValues
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
@@ -74,7 +75,6 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.card.MaterialCardView
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import org.json.JSONArray
@@ -196,10 +196,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var publicMajorInput: MaterialAutoCompleteTextView
     private lateinit var publicClassInput: MaterialAutoCompleteTextView
     private var loginButton: LiquidTintedActionButtonView? = null
-    private var refreshScheduleButton: ImageButton? = null
-    private var scheduleRefreshRunning = false
-    private var scheduleRefreshGeneration = 0
-    private var academicSessionGeneration = 0
     private var loginStatus: TextView? = null
     private var scheduleDate: TextView? = null
     private var scheduleWeek: TextView? = null
@@ -360,7 +356,6 @@ class MainActivity : ComponentActivity() {
         }
         pageHost = FrameLayout(this).apply { setBackgroundColor(PAGE_BACKGROUND) }
         setContentView(pageHost)
-        CourseWidgetProvider.cancelLegacyNetworkRefresh(this)
         startPublicScheduleSyncIfNeeded(inferredCurrentTerm())
         if (hasLocalCourseCache()) showSchedulePage() else showLoginPage(false)
         checkForOnlineUpdate()
@@ -748,15 +743,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showLoginPage(animate: Boolean) {
-        migrateActiveAcademicCaches()
-        academicSessionGeneration++
-        scheduleRefreshGeneration++
-        scheduleRefreshRunning = false
-        refreshScheduleButton = null
-        scoresLoading = false
-        examsLoading = false
-        scoreLoadError = null
-        examLoadError = null
         WindowCompat.setDecorFitsSystemWindows(window, true)
         loginMode = LoginMode.PERSONAL
         viewingPublicSchedule = false
@@ -793,13 +779,6 @@ class MainActivity : ComponentActivity() {
         publicOptionPickerCapturePending = false
         shareOverlay = null
         swapPage(buildLoginPage(), false, animate)
-    }
-
-    private fun migrateActiveAcademicCaches() {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        if (preferences.getString(KEY_ACCOUNT, "").orEmpty().isBlank()) return
-        loadExamCache()
-        loadScoreCache()
     }
 
     private fun showSchedulePage(animate: Boolean = true) {
@@ -1003,7 +982,6 @@ class MainActivity : ComponentActivity() {
             onPositionChanged = { position -> modeToggle.setSelectionPosition(position) },
             createModeForm = { nextMode ->
                 val currentTerm = semesterInput.text?.toString().orEmpty()
-                if (loginMode != nextMode) academicSessionGeneration++
                 loginMode = nextMode
                 hideKeyboard()
                 if (nextMode == LoginMode.PUBLIC) {
@@ -1146,38 +1124,12 @@ class MainActivity : ComponentActivity() {
                 .remove(KEY_SCORES)
                 .remove(KEY_EXAMS)
                 .apply()
-            savePasswordCache(id, pwd)
             saveCourseCache(sampleCourses())
             saveScoreCache(sampleScoreResult(selectedSemester))
             saveExamCache(selectedSemester, sampleExams())
             showSchedulePage()
             return
         }
-        val localPassword = cachedPassword(id)
-        if (hasCourseCache(id, selectedSemester) && localPassword != null && pwd == localPassword) {
-            activateCourseCache(id, selectedSemester)
-            val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            val previousAccount = preferences.getString(KEY_ACCOUNT, "").orEmpty()
-            val previousTerm = preferences.getString(KEY_TERM, "").orEmpty()
-            val accountChanged = previousAccount != id
-            val studentName = cachedStudentName(id)
-            val loginEdit = preferences.edit()
-                .putString(KEY_ACCOUNT, id)
-                .putString(KEY_PASSWORD, localPassword)
-                .putString(KEY_TERM, selectedSemester)
-                .putString(KEY_SCORE_TERM, selectedSemester)
-                .putString(KEY_STUDENT_NAME, studentName)
-            if (accountChanged || previousTerm != selectedSemester) {
-                loginEdit.remove(KEY_SCORES).remove(KEY_EXAMS)
-            }
-            loginEdit.apply()
-            savePasswordCache(id, localPassword)
-            saveStudentNameCache(id, studentName)
-            notifyCourseDataChanged()
-            showSchedulePage()
-            return
-        }
-        val requestGeneration = academicSessionGeneration
         loginButton?.setButtonEnabled(false)
         loginButton?.text = "正在查询课程…"
         networkExecutor.execute {
@@ -1191,11 +1143,6 @@ class MainActivity : ComponentActivity() {
                     Course(remote.day, remote.startSlot, remote.slotCount, remote.name, remote.room, remote.teacher, COURSE_COLORS.first(), Color.WHITE, remote.weeks)
                 })
                 runOnUiThread {
-                    if (
-                        requestGeneration != academicSessionGeneration ||
-                        !onLoginPage ||
-                        loginMode != LoginMode.PERSONAL
-                    ) return@runOnUiThread
                     getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                         .putString(KEY_ACCOUNT, id)
                         .putString(KEY_PASSWORD, pwd)
@@ -1205,8 +1152,6 @@ class MainActivity : ComponentActivity() {
                         .remove(KEY_SCORES)
                         .remove(KEY_EXAMS)
                         .apply()
-                    savePasswordCache(id, pwd)
-                    saveStudentNameCache(id, profile?.name.orEmpty())
                     saveCourseCache(courses)
                     loginButton?.setButtonEnabled(true)
                     loginButton?.text = "进入课程表"
@@ -1214,11 +1159,6 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (error: Exception) {
                 runOnUiThread {
-                    if (
-                        requestGeneration != academicSessionGeneration ||
-                        !onLoginPage ||
-                        loginMode != LoginMode.PERSONAL
-                    ) return@runOnUiThread
                     showLoginError(error)
                     loginButton?.setButtonEnabled(true)
                     loginButton?.text = "进入课程表"
@@ -1704,27 +1644,18 @@ class MainActivity : ComponentActivity() {
         examsLoading = true
         examLoadError = null
         if (cached == null) refreshVisibleExams()
-        val sessionGeneration = academicSessionGeneration
         networkExecutor.execute {
             try {
                 val records = SdauCourseRepository().queryExams(account, password, term)
+                val changed = cached?.records != records
+                saveExamCache(term, records)
                 runOnUiThread {
-                    if (
-                        sessionGeneration != academicSessionGeneration ||
-                        !isActiveAcademicSession(account, term)
-                    ) return@runOnUiThread
-                    val changed = cached?.records != records
-                    saveExamCache(term, records, account)
                     examsLoading = false
                     examLoadError = null
                     if (changed) refreshVisibleExams()
                 }
             } catch (error: Exception) {
                 runOnUiThread {
-                    if (
-                        sessionGeneration != academicSessionGeneration ||
-                        !isActiveAcademicSession(account, term)
-                    ) return@runOnUiThread
                     examsLoading = false
                     examLoadError = if (cached == null) {
                         error.message?.replace(Regex("\\s+"), " ")?.take(160)
@@ -1883,7 +1814,6 @@ class MainActivity : ComponentActivity() {
         scoresLoading = true
         scoreLoadError = null
         if (cached == null) refreshVisibleGrades()
-        val sessionGeneration = academicSessionGeneration
         networkExecutor.execute {
             try {
                 val repository = SdauCourseRepository()
@@ -1892,15 +1822,11 @@ class MainActivity : ComponentActivity() {
                 } else {
                     null
                 }
+                profile?.let { saveStudentName(it.name) }
                 val result = repository.queryScores(account, password, term, allScoreTerms(account))
                 val changed = cached != result
+                saveScoreCache(result)
                 runOnUiThread {
-                    if (
-                        sessionGeneration != academicSessionGeneration ||
-                        !isActiveAcademicSession(account)
-                    ) return@runOnUiThread
-                    profile?.let { saveStudentName(account, it.name) }
-                    saveScoreCache(result, account)
                     scoresLoading = false
                     scoreLoadError = null
                     if (changed) refreshVisibleGrades()
@@ -1908,10 +1834,6 @@ class MainActivity : ComponentActivity() {
                 }
             } catch (error: Exception) {
                 runOnUiThread {
-                    if (
-                        sessionGeneration != academicSessionGeneration ||
-                        !isActiveAcademicSession(account)
-                    ) return@runOnUiThread
                     scoresLoading = false
                     scoreLoadError = if (cached == null) {
                         error.message?.replace(Regex("\\s+"), " ")?.take(160)
@@ -3164,18 +3086,6 @@ class MainActivity : ComponentActivity() {
             setPadding(dp(11), dp(10), dp(11), dp(10))
             setOnClickListener { showLoginPage(true) }
         }, LinearLayout.LayoutParams(dp(48), dp(44)))
-        if (!viewingPublicSchedule) {
-            row.addView(ImageButton(this).apply {
-                refreshScheduleButton = this
-                setImageResource(R.drawable.ic_menu_refresh)
-                contentDescription = "刷新课表"
-                setBackgroundColor(Color.TRANSPARENT)
-                setPadding(dp(11), dp(10), dp(11), dp(10))
-                setOnClickListener { showRefreshScheduleConfirmation() }
-            }, LinearLayout.LayoutParams(dp(48), dp(44)))
-        } else {
-            refreshScheduleButton = null
-        }
         row.addView(ImageButton(this).apply {
             setImageResource(R.drawable.ic_more)
             contentDescription = "更多操作"
@@ -3185,97 +3095,6 @@ class MainActivity : ComponentActivity() {
         }, LinearLayout.LayoutParams(dp(56), dp(44)))
         header.addView(row, spacedParams(dp(6)))
         return header
-    }
-
-    private fun showRefreshScheduleConfirmation() {
-        if (scheduleRefreshRunning || viewingPublicSchedule) return
-        MaterialAlertDialogBuilder(this)
-            .setTitle("更新课表")
-            .setMessage("是否从教务系统重新获取并更新当前学期课表？")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认更新") { _, _ -> refreshPersonalSchedule() }
-            .show()
-    }
-
-    private fun refreshPersonalSchedule() {
-        if (scheduleRefreshRunning || viewingPublicSchedule) return
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
-        val password = preferences.getString(KEY_PASSWORD, "").orEmpty()
-        val term = preferences.getString(KEY_TERM, "").orEmpty()
-        if (account.isBlank() || password.isBlank() || term.isBlank()) {
-            showLiquidToast(
-                message = "登录信息不完整，请重新登录后再刷新课表",
-                visual = LiquidToastVisual.ERROR,
-                durationMillis = 2_800L
-            )
-            return
-        }
-        if (account == "114514") {
-            saveCourseCache(sampleCourses())
-            scheduleGrid?.setCourses(loadCourseCache())
-            showLiquidToast("课表已更新", LiquidToastVisual.SUCCESS, 1_800L)
-            return
-        }
-
-        val requestGeneration = ++scheduleRefreshGeneration
-        val sessionGeneration = academicSessionGeneration
-        scheduleRefreshRunning = true
-        refreshScheduleButton?.apply {
-            isEnabled = false
-            alpha = .5f
-        }
-        showLiquidToast("正在从教务系统更新课表…", LiquidToastVisual.LOADING, 0L)
-        networkExecutor.execute {
-            try {
-                val remoteCourses = SdauCourseRepository().queryCourses(account, password, term)
-                val courses = recolorCourses(remoteCourses.map { remote ->
-                    Course(
-                        remote.day,
-                        remote.startSlot,
-                        remote.slotCount,
-                        remote.name,
-                        remote.room,
-                        remote.teacher,
-                        COURSE_COLORS.first(),
-                        Color.WHITE,
-                        remote.weeks
-                    )
-                })
-                runOnUiThread {
-                    if (
-                        requestGeneration != scheduleRefreshGeneration ||
-                        sessionGeneration != academicSessionGeneration ||
-                        !isActiveAcademicSession(account, term)
-                    ) return@runOnUiThread
-                    saveCourseCache(courses, account, term)
-                    scheduleGrid?.setCourses(loadCourseCache())
-                    showLiquidToast("课表已更新", LiquidToastVisual.SUCCESS, 2_000L)
-                }
-            } catch (error: Exception) {
-                runOnUiThread {
-                    if (
-                        requestGeneration != scheduleRefreshGeneration ||
-                        sessionGeneration != academicSessionGeneration ||
-                        !isActiveAcademicSession(account, term)
-                    ) return@runOnUiThread
-                    showLiquidToast(
-                        message = "课表更新失败：${error.message ?: "未知错误"}",
-                        visual = LiquidToastVisual.ERROR,
-                        durationMillis = 3_000L
-                    )
-                }
-            } finally {
-                runOnUiThread {
-                    if (requestGeneration != scheduleRefreshGeneration) return@runOnUiThread
-                    scheduleRefreshRunning = false
-                    refreshScheduleButton?.apply {
-                        isEnabled = true
-                        alpha = 1f
-                    }
-                }
-            }
-        }
     }
 
     private fun showUpdateMenu(anchor: View, fromBottom: Boolean = false) {
@@ -4071,12 +3890,13 @@ class MainActivity : ComponentActivity() {
         val dayColumnWidth = (gridWidth - timeColumnWidth) / 7f
         val headerHeight = 166f
         val rowHeight = (gridHeight - headerHeight) / 5f
-        val background = Color.rgb(243, 249, 252)
-        val gridFill = Color.rgb(250, 253, 255)
-        val headerFill = Color.rgb(239, 248, 252)
-        val gridLine = Color.rgb(211, 229, 238)
-        val primary = Color.rgb(23, 51, 63)
-        val secondary = Color.rgb(87, 115, 130)
+        val dark = isDarkCourseContext()
+        val background = if (dark) Color.rgb(18, 18, 22) else Color.rgb(243, 249, 252)
+        val gridFill = if (dark) Color.rgb(28, 28, 34) else Color.rgb(250, 253, 255)
+        val headerFill = if (dark) Color.rgb(36, 36, 44) else Color.rgb(239, 248, 252)
+        val gridLine = if (dark) Color.rgb(55, 55, 65) else Color.rgb(211, 229, 238)
+        val primary = if (dark) Color.rgb(240, 240, 245) else Color.rgb(23, 51, 63)
+        val secondary = if (dark) Color.rgb(170, 170, 180) else Color.rgb(87, 115, 130)
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG)
@@ -4138,6 +3958,28 @@ class MainActivity : ComponentActivity() {
             (Color.green(color) * .42f).toInt().coerceIn(30, 110),
             (Color.blue(color) * .42f).toInt().coerceIn(30, 110)
         )
+
+        fun darkCourseColor(color: Int): Int {
+            val r = Color.red(color) * 0.50f
+            val g = Color.green(color) * 0.50f
+            val b = Color.blue(color) * 0.50f
+            val hsv = FloatArray(3)
+            Color.RGBToHSV(r.toInt().coerceIn(0, 255), g.toInt().coerceIn(0, 255), b.toInt().coerceIn(0, 255), hsv)
+            hsv[1] = (hsv[1] * 1.10f).coerceAtMost(1f)
+            hsv[2] = (hsv[2] * 1.20f + 0.10f).coerceAtMost(1f)
+            return Color.HSVToColor(hsv)
+        }
+
+        fun courseFillColor(color: Int): Int = if (dark) darkCourseColor(color) else lightCourseColor(color)
+        fun courseStrokeColor(color: Int): Int {
+            val base = courseFillColor(color)
+            return if (dark) base else Color.rgb(
+                (Color.red(base) * .92f).toInt(),
+                (Color.green(base) * .92f).toInt(),
+                (Color.blue(base) * .92f).toInt()
+            )
+        }
+        fun courseTextColorAdapted(color: Int): Int = if (dark) Color.WHITE else courseTextColor(color)
 
         val gridLeft = padding
         val gridRight = padding + gridWidth
@@ -4222,18 +4064,12 @@ class MainActivity : ComponentActivity() {
             val bottom = gridTop + headerHeight + end * rowHeight - 9f
             if (bottom <= top) return@forEach
 
-            val fillColor = lightCourseColor(course.background)
-            val textColor = courseTextColor(course.background)
+            val fillColor = courseFillColor(course.background)
+            val textColor = courseTextColorAdapted(course.background)
             roundedRect(left, top, right, bottom, 14f, fillColor)
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 2f
-            paint.color = lightCourseColor(course.background).let {
-                Color.rgb(
-                    (Color.red(it) * .92f).toInt(),
-                    (Color.green(it) * .92f).toInt(),
-                    (Color.blue(it) * .92f).toInt()
-                )
-            }
+            paint.color = courseStrokeColor(course.background)
             canvas.drawRoundRect(RectF(left, top, right, bottom), 14f, 14f, paint)
 
             val textLeft = left + 11f
@@ -4645,6 +4481,25 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    private fun isSystemDarkMode(): Boolean {
+        val uiMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        return uiMode == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    private fun isDarkCourseContext(): Boolean =
+        isSystemDarkMode() || scheduleTextPalette.usesDarkForeground
+
+    private fun darkCourseColor(color: Int): Int {
+        val r = Color.red(color) * 0.50f
+        val g = Color.green(color) * 0.50f
+        val b = Color.blue(color) * 0.50f
+        val hsv = FloatArray(3)
+        Color.RGBToHSV(r.toInt().coerceIn(0, 255), g.toInt().coerceIn(0, 255), b.toInt().coerceIn(0, 255), hsv)
+        hsv[1] = (hsv[1] * 1.10f).coerceAtMost(1f)
+        hsv[2] = (hsv[2] * 1.20f + 0.10f).coerceAtMost(1f)
+        return Color.HSVToColor(hsv)
+    }
+
     private fun courseColorAt(index: Int): Int {
         if (index < COURSE_COLORS.size) return COURSE_COLORS[index]
         return Color.HSVToColor(floatArrayOf((index * 137.508f) % 360f, 0.48f, 0.90f))
@@ -5000,10 +4855,7 @@ class MainActivity : ComponentActivity() {
     )
 
     private fun hasLocalCourseCache(): Boolean {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
-        val term = preferences.getString(KEY_TERM, "").orEmpty()
-        return account.isNotBlank() && term.isNotBlank() && activateCourseCache(account, term)
+        return getSharedPreferences(PREFS_NAME, MODE_PRIVATE).contains(KEY_COURSES)
     }
 
     private fun publicScheduleFile(term: String): File {
@@ -5462,33 +5314,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun saveCourseCache(
-        courses: List<Course>,
-        account: String = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getString(KEY_ACCOUNT, "").orEmpty(),
-        term: String = selectedTerm()
-    ) {
-        val imported = courses.filterNot(Course::isCustom)
-        val scoped = account.isNotBlank() && term.isNotBlank()
-        if (scoped) {
-            saveCoursesToPreference(courseCacheKey(account, term), imported)
-        }
-        if (!scoped || isActiveAcademicSession(account, term)) {
-            saveCoursesToPreference(KEY_COURSES, imported)
-            notifyCourseDataChanged()
-        }
+    private fun saveCourseCache(courses: List<Course>) {
+        saveCoursesToPreference(KEY_COURSES, courses.filterNot(Course::isCustom))
+        notifyCourseDataChanged()
     }
 
     private fun saveCustomCourseCache(courses: List<Course>) {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
-        val term = selectedTerm()
-        val customCourses = courses.filter(Course::isCustom).map { it.copy(isCustom = true) }
-        if (account.isNotBlank()) {
-            saveCoursesToPreference(customCourseCacheKey(account, term), customCourses)
-        }
-        saveCoursesToPreference(legacyCustomCourseCacheKey(term), customCourses)
-        preferences.edit().putString(customCourseOwnerKey(term), account).apply()
+        saveCoursesToPreference(
+            customCourseCacheKey(),
+            courses.filter(Course::isCustom).map { it.copy(isCustom = true) }
+        )
         notifyCourseDataChanged()
     }
 
@@ -5522,153 +5357,12 @@ class MainActivity : ComponentActivity() {
         return recolorCourses(loadImportedCourseCache() + loadCustomCourseCache())
     }
 
-    private fun loadImportedCourseCache(): List<Course> {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
-        val term = preferences.getString(KEY_TERM, "").orEmpty()
-        if (account.isNotBlank() && term.isNotBlank()) {
-            val key = courseCacheKey(account, term)
-            if (preferences.contains(key)) return loadCoursesFromPreference(key, false)
-            if (preferences.contains(KEY_COURSES)) {
-                preferences.getString(KEY_COURSES, null)?.let { legacy ->
-                    preferences.edit().putString(key, legacy).apply()
-                }
-            }
-        }
-        return loadCoursesFromPreference(KEY_COURSES, false)
-    }
+    private fun loadImportedCourseCache(): List<Course> = loadCoursesFromPreference(KEY_COURSES, false)
 
-    private fun activateCourseCache(account: String, term: String): Boolean {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val key = courseCacheKey(account, term)
-        val cached = preferences.getString(key, null) ?: run {
-            val legacyBelongsToAccount = preferences.getString(KEY_ACCOUNT, "").orEmpty() == account &&
-                preferences.getString(KEY_TERM, "").orEmpty() == term
-            if (!legacyBelongsToAccount) return false
-            preferences.getString(KEY_COURSES, null)?.also { legacy ->
-                preferences.edit().putString(key, legacy).apply()
-            } ?: return false
-        }
-        preferences.edit().putString(KEY_COURSES, cached).apply()
-        activateCustomCourseCache(account, term)
-        return true
-    }
+    private fun loadCustomCourseCache(): List<Course> = loadCoursesFromPreference(customCourseCacheKey(), true)
 
-    private fun hasCourseCache(account: String, term: String): Boolean {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        if (preferences.contains(courseCacheKey(account, term))) return true
-        return preferences.getString(KEY_ACCOUNT, "").orEmpty() == account &&
-            preferences.getString(KEY_TERM, "").orEmpty() == term &&
-            preferences.contains(KEY_COURSES)
-    }
-
-    private fun isActiveAcademicSession(account: String, term: String? = null): Boolean {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        if (preferences.getString(KEY_ACCOUNT, "").orEmpty() != account) return false
-        return term == null || preferences.getString(KEY_TERM, "").orEmpty() == term
-    }
-
-    private fun courseCacheKey(account: String, term: String): String {
-        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "${KEY_COURSES_PREFIX}_${safeAccount}_$safeTerm"
-    }
-
-    private fun studentNameCacheKey(account: String): String {
-        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "${KEY_STUDENT_NAME_PREFIX}_$safeAccount"
-    }
-
-    private fun passwordCacheKey(account: String): String {
-        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "${KEY_PASSWORD_PREFIX}_$safeAccount"
-    }
-
-    private fun savePasswordCache(account: String, password: String) {
-        if (account.isBlank() || password.isBlank()) return
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-            .putString(passwordCacheKey(account), password)
-            .apply()
-    }
-
-    private fun cachedPassword(account: String): String? {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        return preferences.getString(passwordCacheKey(account), null)
-            ?.takeIf { it.isNotBlank() }
-            ?: preferences.getString(KEY_PASSWORD, null)
-                ?.takeIf {
-                    it.isNotBlank() &&
-                        preferences.getString(KEY_ACCOUNT, "").orEmpty() == account
-                }
-    }
-
-    private fun saveStudentNameCache(account: String, name: String) {
-        if (account.isBlank()) return
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-            .putString(studentNameCacheKey(account), name)
-            .apply()
-    }
-
-    private fun cachedStudentName(account: String): String {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        return preferences.getString(studentNameCacheKey(account), null)
-            ?: preferences.getString(KEY_STUDENT_NAME, "").orEmpty()
-                .takeIf { preferences.getString(KEY_ACCOUNT, "").orEmpty() == account }
-            ?: ""
-    }
-
-    private fun loadCustomCourseCache(): List<Course> {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
-        val term = selectedTerm()
-        if (account.isBlank()) return emptyList()
-        activateCustomCourseCache(account, term)
-        return loadCoursesFromPreference(customCourseCacheKey(account, term), true)
-    }
-
-    private fun activateCustomCourseCache(account: String, term: String) {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val accountKey = customCourseCacheKey(account, term)
-        val legacyKey = legacyCustomCourseCacheKey(term)
-        val ownerKey = customCourseOwnerKey(term)
-        val cached = preferences.getString(accountKey, null)
-        if (cached != null) {
-            preferences.edit()
-                .putString(legacyKey, cached)
-                .putString(ownerKey, account)
-                .apply()
-            return
-        }
-
-        val legacy = preferences.getString(legacyKey, null)
-        val legacyOwner = preferences.getString(ownerKey, null)
-        val legacyBelongsToAccount = legacyOwner == account ||
-            (legacyOwner == null && preferences.getString(KEY_ACCOUNT, "").orEmpty() == account)
-        if (legacy != null && legacyBelongsToAccount) {
-            preferences.edit()
-                .putString(accountKey, legacy)
-                .putString(ownerKey, account)
-                .apply()
-        } else {
-            preferences.edit()
-                .putString(accountKey, "[]")
-                .putString(legacyKey, "[]")
-                .putString(ownerKey, account)
-                .apply()
-        }
-    }
-
-    private fun customCourseCacheKey(account: String, term: String): String {
-        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "${KEY_CUSTOM_COURSES_PREFIX}_${safeAccount}_$safeTerm"
-    }
-
-    private fun legacyCustomCourseCacheKey(term: String): String =
+    private fun customCourseCacheKey(term: String = selectedTerm()): String =
         "${KEY_CUSTOM_COURSES_PREFIX}_${term.replace(Regex("[^A-Za-z0-9_-]"), "_")}" 
-
-    private fun customCourseOwnerKey(term: String): String =
-        "${KEY_CUSTOM_COURSES_OWNER_PREFIX}_${term.replace(Regex("[^A-Za-z0-9_-]"), "_")}"
 
     private fun loadCoursesFromPreference(key: String, isCustom: Boolean): List<Course> {
         val raw = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(key, null) ?: return emptyList()
@@ -5690,12 +5384,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun saveExamCache(
-        term: String,
-        records: List<RemoteExam>,
-        account: String = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getString(KEY_ACCOUNT, "").orEmpty()
-    ) {
+    private fun saveExamCache(term: String, records: List<RemoteExam>) {
         val array = JSONArray()
         records.forEach { exam ->
             array.put(JSONObject().apply {
@@ -5707,37 +5396,16 @@ class MainActivity : ComponentActivity() {
             })
         }
         val payload = JSONObject().apply {
-            put("account", account)
             put("term", term)
             put("records", array)
         }
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val raw = payload.toString()
-        val edit = preferences.edit()
-        if (account.isNotBlank()) edit.putString(examCacheKey(account, term), raw)
-        if (account.isBlank() || isActiveAcademicSession(account, term)) {
-            edit.putString(KEY_EXAMS, raw)
-        }
-        edit.apply()
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(KEY_EXAMS, payload.toString())
+            .apply()
     }
 
     private fun loadExamCache(): ExamCache? {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
-        val term = selectedTerm()
-        if (account.isBlank()) return null
-        val key = examCacheKey(account, term)
-        val raw = preferences.getString(key, null) ?: run {
-            val legacy = preferences.getString(KEY_EXAMS, null) ?: return null
-            val legacyPayload = runCatching { JSONObject(legacy) }.getOrNull() ?: return null
-            val legacyAccount = legacyPayload.optString("account")
-            if (
-                legacyPayload.optString("term") != term ||
-                (legacyAccount.isNotBlank() && legacyAccount != account)
-            ) return null
-            preferences.edit().putString(key, legacy).apply()
-            legacy
-        }
+        val raw = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_EXAMS, null) ?: return null
         return runCatching {
             val payload = JSONObject(raw)
             val rows = payload.optJSONArray("records") ?: JSONArray()
@@ -5759,11 +5427,7 @@ class MainActivity : ComponentActivity() {
         }.getOrNull()
     }
 
-    private fun saveScoreCache(
-        result: RemoteScoreResult,
-        account: String = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-            .getString(KEY_ACCOUNT, "").orEmpty()
-    ) {
+    private fun saveScoreCache(result: RemoteScoreResult) {
         val records = JSONArray()
         result.records.forEach { score ->
             records.put(JSONObject().apply {
@@ -5778,7 +5442,6 @@ class MainActivity : ComponentActivity() {
             })
         }
         val payload = JSONObject().apply {
-            put("account", account)
             put("term", result.term)
             put("statsScope", SCORE_STATS_SCOPE)
             put("averageScore", result.averageScore)
@@ -5786,46 +5449,19 @@ class MainActivity : ComponentActivity() {
             put("totalCredits", result.totalCredits)
             put("records", records)
         }
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val raw = payload.toString()
-        val edit = preferences.edit()
-        if (account.isNotBlank()) edit.putString(scoreCacheKey(account, result.term), raw)
-        if (
-            account.isBlank() ||
-            (isActiveAcademicSession(account) && selectedScoreTerm() == result.term)
-        ) {
-            edit.putString(KEY_SCORES, raw)
-        }
-        edit.apply()
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(KEY_SCORES, payload.toString())
+            .apply()
     }
 
-    private fun saveStudentName(account: String, name: String) {
-        val normalized = name.trim()
-        saveStudentNameCache(account, normalized)
-        if (isActiveAcademicSession(account)) {
-            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
-                .putString(KEY_STUDENT_NAME, normalized)
-                .apply()
-        }
+    private fun saveStudentName(name: String) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(KEY_STUDENT_NAME, name.trim())
+            .apply()
     }
 
     private fun loadScoreCache(): RemoteScoreResult? {
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
-        val term = selectedScoreTerm()
-        if (account.isBlank()) return null
-        val key = scoreCacheKey(account, term)
-        val raw = preferences.getString(key, null) ?: run {
-            val legacy = preferences.getString(KEY_SCORES, null) ?: return null
-            val legacyPayload = runCatching { JSONObject(legacy) }.getOrNull() ?: return null
-            val legacyAccount = legacyPayload.optString("account")
-            if (
-                legacyPayload.optString("term") != term ||
-                (legacyAccount.isNotBlank() && legacyAccount != account)
-            ) return null
-            preferences.edit().putString(key, legacy).apply()
-            legacy
-        }
+        val raw = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_SCORES, null) ?: return null
         return runCatching {
             val payload = JSONObject(raw)
             val records = payload.optJSONArray("records") ?: JSONArray()
@@ -5860,18 +5496,6 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }.getOrNull()
-    }
-
-    private fun examCacheKey(account: String, term: String): String {
-        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "${KEY_EXAMS_PREFIX}_${safeAccount}_$safeTerm"
-    }
-
-    private fun scoreCacheKey(account: String, term: String): String {
-        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "${KEY_SCORES_PREFIX}_${safeAccount}_$safeTerm"
     }
 
     private fun inputBox(hint: String) = TextInputLayout(this).apply {
@@ -5980,7 +5604,6 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (onLoginPage && loginMode == LoginMode.PUBLIC) {
-            academicSessionGeneration++
             loginMode = LoginMode.PERSONAL
             swapPage(buildLoginPage(), false, true)
             return
@@ -7587,9 +7210,13 @@ class MainActivity : ComponentActivity() {
             val right = left + courseWidth
             val bottom = headerHeight + (course.startSlot + course.slotCount) * slotHeight - dp(2f)
             rect.set(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
-            paint.style = Paint.Style.FILL; paint.color = course.background
+            val dark = isDarkCourseContext()
+            val fillColor = if (dark) darkCourseColor(course.background) else course.background
+            paint.style = Paint.Style.FILL; paint.color = fillColor
             val corner = minOf(dp(9f).toFloat(), dayColumnWidth * .12f); canvas.drawRoundRect(rect, corner, corner, paint)
-            paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(2f).toFloat(); paint.color = Color.argb(175, 255, 255, 255); canvas.drawRoundRect(rect, corner, corner, paint)
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(2f).toFloat()
+            paint.color = if (dark) Color.argb(60, 255, 255, 255) else Color.argb(175, 255, 255, 255)
+            canvas.drawRoundRect(rect, corner, corner, paint)
             val padding = maxOf(dp(3f).toFloat(), minOf(dp(7f).toFloat(), dayColumnWidth * .075f))
             // 使用卡片的真实内部宽度。列宽还包含左右各 3dp 的卡片外边距，
             // 若直接使用 dayColumnWidth，W/M 等宽字形会被误判为能够放下并越界。
@@ -7603,7 +7230,7 @@ class MainActivity : ComponentActivity() {
             }
             paint.style = Paint.Style.FILL
             paint.textSize = size
-            paint.color = course.foreground
+            paint.color = if (dark) Color.WHITE else course.foreground
             paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             var baseline = top + padding - paint.ascent()
             val lineHeight = size * 1.16f
@@ -8101,22 +7728,16 @@ class MainActivity : ComponentActivity() {
         private const val PREFS_NAME = "offline_login"
         private const val KEY_ACCOUNT = "account"
         private const val KEY_PASSWORD = "password"
-        private const val KEY_PASSWORD_PREFIX = "password_cache"
         private const val KEY_STUDENT_NAME = "student_name"
-        private const val KEY_STUDENT_NAME_PREFIX = "student_name_cache"
         private const val KEY_TERM = "term"
         private const val KEY_SCORE_TERM = "score_term"
         private const val KEY_COURSES = "courses_cache"
-        private const val KEY_COURSES_PREFIX = "courses_cache_account"
         private const val KEY_CUSTOM_COURSES_PREFIX = "custom_courses_cache"
-        private const val KEY_CUSTOM_COURSES_OWNER_PREFIX = "custom_courses_owner"
         private const val KEY_PUBLIC_SCHEDULE_SYNCED_TERM = "public_schedule_synced_term"
         private const val KEY_PUBLIC_SCHEDULE_HASH_PREFIX = "public_schedule_sha256_"
         private const val KEY_SCORES = "scores_cache"
-        private const val KEY_SCORES_PREFIX = "scores_cache_account"
         private const val SCORE_STATS_SCOPE = "all_terms_v2"
         private const val KEY_EXAMS = "exams_cache"
-        private const val KEY_EXAMS_PREFIX = "exams_cache_account"
         private const val KEY_COLOR_MAP = "course_color_map"
         private const val KEY_PUSH_ENABLED = "push_enabled"
         private const val KEY_BATTERY_PROMPTED = "battery_prompted"

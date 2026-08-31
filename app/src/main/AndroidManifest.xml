@@ -44,6 +44,10 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/course_widget_compact_info" />
         </receiver>
+        <service
+            android:name=".CourseWidgetRefreshJobService"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
         <provider android:name="androidx.core.content.FileProvider" android:authorities="${applicationId}.fileprovider" android:exported="false" android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
         </provider>
