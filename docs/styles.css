@@ -1898,12 +1898,15 @@ img {
 }
 
 .hero-typewriter-line em {
-  color: transparent;
-  background-image: linear-gradient(105deg, #1267ed 0%, #566fe9 38%, #0b9ecb 68%, #1267ed 100%);
-  background-size: 240% 100%;
-  background-clip: text;
-  -webkit-background-clip: text;
-  animation: typewriter-shimmer 3.8s ease-in-out infinite;
+  color: var(--type-color, #1769e8);
+  white-space: pre-line;
+  background: none;
+  -webkit-text-fill-color: currentColor;
+  animation: none;
+}
+
+.hero-title-static {
+  color: #09152f;
 }
 
 .typewriter-caret {
@@ -3169,7 +3172,7 @@ img {
 }
 
 .principles-section {
-  background: linear-gradient(135deg, #e5edf7 0%, #f0f5fa 58%, #e4edf5 100%);
+  background: linear-gradient(135deg, #f6f7f9 0%, #eef2f6 58%, #e8edf3 100%);
 }
 
 .updates-section {
@@ -3264,5 +3267,78 @@ img {
 
   .grade-detail-preview {
     padding: 0 22px 28px;
+  }
+}
+
+/* Keep the homepage headline lighter and more compact. */
+.hero h1 {
+  font-size: clamp(38px, 5vw, 68px);
+}
+
+@media (max-width: 560px) {
+  .hero h1 {
+    font-size: clamp(34px, 10.8vw, 50px);
+  }
+}
+
+/* The opening slogan starts as one flowing line and only breaks when the final phrase does. */
+.hero h1 {
+  display: block;
+  font-size: clamp(42px, 5.2vw, 60px);
+  line-height: 1.12;
+  min-height: 1.12em;
+}
+
+.hero-title-static {
+  display: none;
+}
+
+.hero-typewriter-line {
+  display: inline-flex;
+  vertical-align: baseline;
+  margin-left: 0;
+  white-space: nowrap;
+}
+
+.hero h1 .hero-typewriter-line em {
+  color: var(--type-color, #1769e8) !important;
+  -webkit-text-fill-color: var(--type-color, #1769e8) !important;
+}
+
+.device-nav-hotspots {
+  position: absolute;
+  z-index: 5;
+  right: 20%;
+  bottom: 4.5%;
+  left: 20%;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  height: 8%;
+}
+
+.device-nav-hotspots button {
+  min-width: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.device-nav-hotspots button:focus-visible {
+  outline: 2px solid rgba(18, 103, 237, .75);
+  outline-offset: -5px;
+}
+
+@media (max-width: 560px) {
+  .device-nav-hotspots {
+    right: 18%;
+    bottom: 4%;
+    left: 18%;
+  }
+}
+
+@media (max-width: 560px) {
+  .hero h1 {
+    font-size: clamp(36px, 10.5vw, 50px);
   }
 }

@@ -5,25 +5,49 @@
   const mobileNav = document.querySelector('[data-mobile-nav]');
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  const apkLinks = [...document.querySelectorAll('[data-apk-download]')];
+  if (apkLinks.length) {
+    fetch('https://api.github.com/repos/Sleexycg/WeSDAU/contents/docs/downloads', {
+      headers: { Accept: 'application/vnd.github+json' },
+    })
+      .then((response) => (response.ok ? response.json() : []))
+      .then((files) => {
+        const apk = files.find((file) => file.type === 'file' && file.name.toLowerCase().endsWith('.apk'));
+        if (!apk) return;
+        const downloadUrl = `./downloads/${encodeURIComponent(apk.name)}`;
+        apkLinks.forEach((link) => {
+          link.href = downloadUrl;
+        });
+      })
+      .catch(() => {
+        // Keep the directory fallback when the GitHub API is temporarily unavailable.
+      });
+  }
+
   const typewriter = document.querySelector('[data-typewriter]');
   const typewriterLines = [
-    '课表一眼看清。',
-    '考试心里有数。',
-    '成绩随时可查。',
-    '空教室更好找。',
+    '课表再多也清楚',
+    '考试再忙也不慌',
+    '成绩再杂也能查',
+    '教室再远也好找',
+    '安排再满也从容',
   ];
+  const typewriterColors = ['#1769e8', '#8b5cf6', '#0f9f8f', '#e17b55', '#d14d72'];
   let typewriterTimer = 0;
 
   if (typewriter) {
     if (reducedMotion) {
       typewriter.textContent = typewriterLines[0];
+      typewriter.style.setProperty('--type-color', typewriterColors[0]);
     } else {
       let lineIndex = 0;
       let characterIndex = Array.from(typewriterLines[0]).length;
       let deleting = true;
+      typewriter.style.setProperty('--type-color', typewriterColors[0]);
 
       const advanceTypewriter = () => {
         const characters = Array.from(typewriterLines[lineIndex]);
+        typewriter.style.setProperty('--type-color', typewriterColors[lineIndex]);
 
         if (deleting) {
           characterIndex -= 1;
@@ -32,7 +56,7 @@
           if (characterIndex === 0) {
             deleting = false;
             lineIndex = (lineIndex + 1) % typewriterLines.length;
-            typewriterTimer = window.setTimeout(advanceTypewriter, 140);
+            typewriterTimer = window.setTimeout(advanceTypewriter, 48);
             return;
           }
 
@@ -45,7 +69,7 @@
 
         if (characterIndex === Array.from(typewriterLines[lineIndex]).length) {
           deleting = true;
-          typewriterTimer = window.setTimeout(advanceTypewriter, 920);
+          typewriterTimer = window.setTimeout(advanceTypewriter, 680);
           return;
         }
 
@@ -179,6 +203,13 @@
   };
 
   tabs.forEach((tab) => tab.addEventListener('click', () => switchScreen(tab)));
+
+  document.querySelectorAll('[data-nav-shot]').forEach((hotspot) => {
+    hotspot.addEventListener('click', () => {
+      const target = tabs.find((tab) => tab.dataset.shot === hotspot.dataset.navShot);
+      if (target) switchScreen(target);
+    });
+  });
 
   const themeSwitchers = document.querySelectorAll('[data-theme-switcher]');
   themeSwitchers.forEach((switcher) => {
