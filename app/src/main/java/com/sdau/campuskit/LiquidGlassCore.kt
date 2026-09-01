@@ -109,6 +109,53 @@ import kotlin.math.roundToInt
 /** Shared Compose host, liquid button primitives, and sampled backdrop source. */
 internal enum class LiquidButtonStyle { TRANSPARENT, SURFACE, FROSTED, TINTED }
 
+/**
+ * Dialog secondary action used by the update dialog's "稍后" button.
+ * It intentionally does not sample the backdrop, keeping the capsule quiet and
+ * preventing saturated page content from appearing as a color block inside it.
+ */
+@Composable
+internal fun QuietDialogAction(
+    label: String,
+    foreground: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    height: androidx.compose.ui.unit.Dp = 48.dp
+) {
+    val themeColors = CampusComposeTheme.colors
+    Row(
+        modifier
+            .height(height)
+            .clip(Capsule())
+            .background(
+                if (themeColors.isDark) {
+                    Color.White.copy(alpha = 0.08f)
+                } else {
+                    Color(0xFFFAFAFA).copy(alpha = 0.20f)
+                }
+            )
+            .clickable(
+                enabled = enabled,
+                interactionSource = null,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick
+            )
+            .padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        BasicText(
+            label,
+            style = TextStyle(
+                foreground.copy(alpha = if (enabled) 1f else 0.72f),
+                16.sp
+            )
+        )
+    }
+}
+
 /** Surface/Tinted 绘制核心。 */
 @Composable
 internal fun CampusLiquidButton(
@@ -127,7 +174,8 @@ internal fun CampusLiquidButton(
     val interactiveHighlight = remember(animationScope) {
         InteractiveHighlight(animationScope = animationScope)
     }
-    val accentColor = Color(0xFF0088FF)
+    val themeColors = CampusComposeTheme.colors
+    val accentColor = themeColors.accent
     Box(
         modifier = modifier
             .height(height)
@@ -150,8 +198,11 @@ internal fun CampusLiquidButton(
                     shape = { Capsule() },
                     effects = {
                         if (style == LiquidButtonStyle.FROSTED) {
-                            colorControls(brightness = 0.14f, saturation = 0.62f)
-                            blur(18.dp.toPx())
+                            colorControls(
+                                brightness = if (themeColors.isDark) 0f else 0.14f,
+                                saturation = 0.62f
+                            )
+                            blur((if (themeColors.isDark) 8.dp else 18.dp).toPx())
                             lens(4.dp.toPx(), 8.dp.toPx())
                         } else {
                             vibrancy()
@@ -188,21 +239,39 @@ internal fun CampusLiquidButton(
                     } else {
                         null
                     },
+                    highlight = {
+                        Highlight.Default.copy(alpha = if (themeColors.isDark) 0.12f else 0.62f)
+                    },
                     shadow = null,
                     onDrawSurface = {
                         when (style) {
-                            // Reference Dialog cancel button: a neutral white glass wash,
-                            // without the previous gray-looking surface.
                             LiquidButtonStyle.TRANSPARENT ->
-                                drawRect(Color.White.copy(alpha = 0.12f))
-                            LiquidButtonStyle.SURFACE -> drawRect(Color.White.copy(alpha = 0.30f))
+                                drawRect(
+                                    if (themeColors.isDark) {
+                                        Color.White.copy(alpha = 0.08f)
+                                    } else {
+                                        Color.White.copy(alpha = 0.12f)
+                                    }
+                                )
+                            LiquidButtonStyle.SURFACE -> drawRect(themeColors.glassSurface)
                             LiquidButtonStyle.FROSTED ->
-                                drawRect(Color(0xFFF4F6FA).copy(alpha = 0.68f))
+                                drawRect(themeColors.glassStrongSurface)
                             LiquidButtonStyle.TINTED -> {
                                 drawRect(accentColor, blendMode = BlendMode.Hue)
                                 drawRect(accentColor.copy(alpha = 0.75f))
                             }
                         }
+                    }
+                )
+                .then(
+                    if (themeColors.isDark) {
+                        Modifier.border(
+                            width = 1.dp,
+                            color = Color.White.copy(alpha = 0.24f),
+                            shape = Capsule()
+                        )
+                    } else {
+                        Modifier
                     }
                 )
                 .clickable(
@@ -286,7 +355,14 @@ internal fun composeHostView(
 ): ComposeView = ComposeView(context).apply {
     setBackgroundColor(android.graphics.Color.TRANSPARENT)
     setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-    setContent(content)
+    setCampusContent(content)
+}
+
+/** Ensures every embedded Compose tree receives the same project-level tokens. */
+internal fun ComposeView.setCampusContent(content: @Composable () -> Unit) {
+    setContent {
+        CampusComposeTheme(content = content)
+    }
 }
 
 internal data class ScheduleTextPalette(

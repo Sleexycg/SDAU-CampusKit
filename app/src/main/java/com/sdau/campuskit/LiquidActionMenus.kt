@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.view.View
 import android.widget.FrameLayout
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -119,6 +118,9 @@ internal data class LiquidMenuAction(
     val iconRes: Int,
     val isUpdateAction: Boolean = false,
     val isPushAction: Boolean = false,
+    val isBackAction: Boolean = false,
+    val hasSubmenu: Boolean = false,
+    val enabled: Boolean = true,
     val dividerAfter: Boolean = false,
     val onClick: () -> Unit
 )
@@ -147,7 +149,7 @@ internal class LiquidScoreTermDropdownView(
             ComposeView(context).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setContent {
+                setCampusContent {
                     LiquidScoreTermDropdown(
                         pageSnapshot = pageSnapshot,
                         menuX = menuX,
@@ -189,9 +191,12 @@ internal class LiquidActionMenuView(
     menuX: Int,
     menuY: Int,
     actions: List<LiquidMenuAction>,
+    backgroundActions: List<LiquidMenuAction> = emptyList(),
     hasCustomBackground: Boolean,
     onDismiss: () -> Unit
 ) : FrameLayout(context) {
+    private var rootActions = actions
+    private val secondaryBackgroundActions = backgroundActions
     private var updateStatus by mutableStateOf("")
     private var checkingUpdate by mutableStateOf(false)
     private var menuActions by mutableStateOf(actions)
@@ -205,7 +210,7 @@ internal class LiquidActionMenuView(
             ComposeView(context).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setContent {
+                setCampusContent {
                     LiquidActionMenu(
                         pageSnapshot = pageSnapshot,
                         menuX = menuX,
@@ -237,7 +242,7 @@ internal class LiquidActionMenuView(
     }
 
     fun setPushState(enabled: Boolean) {
-        menuActions = menuActions.map { action ->
+        val updatedRootActions = rootActions.map { action ->
             if (action.isPushAction) {
                 action.copy(
                     title = if (enabled) "关闭课程通知" else "开启课程通知",
@@ -247,6 +252,22 @@ internal class LiquidActionMenuView(
                 action
             }
         }
+        rootActions = updatedRootActions
+        menuActions = if (menuActions.any(LiquidMenuAction::isBackAction)) {
+            menuActions
+        } else {
+            updatedRootActions
+        }
+    }
+
+    fun showBackgroundActions() {
+        if (secondaryBackgroundActions.isNotEmpty()) {
+            menuActions = secondaryBackgroundActions
+        }
+    }
+
+    fun showRootActions() {
+        menuActions = rootActions
     }
 
     fun releaseSnapshot() {
@@ -271,8 +292,9 @@ private fun LiquidActionMenu(
     val snapshotImage = remember(pageSnapshot) { pageSnapshot?.asImageBitmap() }
     val backdrop = rememberLayerBackdrop()
     val panelShape = RoundedCornerShape(22.dp)
-    val contentColor = Color(0xFF171923)
-    val accentColor = Color(0xFF0088FF)
+    val themeColors = CampusComposeTheme.colors
+    val contentColor = themeColors.primaryText
+    val accentColor = themeColors.accent
     var slidingIndex by remember { mutableStateOf<Int?>(null) }
     val actionBounds = remember(actions) { mutableMapOf<Int, Pair<Float, Float>>() }
     val density = LocalDensity.current
@@ -288,18 +310,6 @@ private fun LiquidActionMenu(
         ),
         label = "actionMenuReveal"
     )
-    val sheenProgress = remember { Animatable(0f) }
-    LaunchedEffect(expanded) {
-        if (expanded) {
-            sheenProgress.snapTo(0f)
-            sheenProgress.animateTo(
-                1f,
-                animationSpec = tween(420, easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f))
-            )
-        } else {
-            sheenProgress.snapTo(0f)
-        }
-    }
     val panelOffsetPx = with(density) { 7.dp.toPx() }
     val itemOffsetPx = with(density) { 5.dp.toPx() }
 
@@ -317,7 +327,7 @@ private fun LiquidActionMenu(
                     contentScale = ContentScale.FillBounds
                 )
             } else {
-                Box(Modifier.fillMaxSize().background(Color(0xFFE9EFF8)))
+                Box(Modifier.fillMaxSize().background(themeColors.pageBackground))
             }
         }
         Box(
@@ -329,6 +339,9 @@ private fun LiquidActionMenu(
             Modifier
                 .offset { IntOffset(menuX, menuY) }
                 .width(204.dp)
+                .animateContentSize(
+                    animationSpec = spring(dampingRatio = 0.82f, stiffness = 420f)
+                )
                 .graphicsLayer {
                     alpha = revealProgress
                     translationY = -panelOffsetPx * (1f - revealProgress)
@@ -341,7 +354,10 @@ private fun LiquidActionMenu(
                     shape = { RoundedRectangle(22.dp) },
                     effects = {
                         vibrancy()
-                        if (hasCustomBackground) {
+                        if (themeColors.isDark) {
+                            colorControls(brightness = 0f, saturation = 0.52f)
+                            blur(8.dp.toPx())
+                        } else if (hasCustomBackground) {
                             colorControls(brightness = 0.06f, saturation = 1.25f)
                             blur(12.dp.toPx())
                         } else {
@@ -350,41 +366,30 @@ private fun LiquidActionMenu(
                         }
                         lens(12.dp.toPx(), 24.dp.toPx(), depthEffect = true)
                     },
-                    highlight = { Highlight.Default.copy(alpha = 0.68f) },
+                    highlight = {
+                        Highlight.Default.copy(alpha = if (themeColors.isDark) 0.12f else 0.68f)
+                    },
                     onDrawSurface = {
                         drawRect(
-                            Color.White.copy(alpha = if (hasCustomBackground) 0.30f else 0.42f)
+                            if (themeColors.isDark) {
+                                themeColors.glassStrongSurface
+                            } else {
+                                Color.White.copy(alpha = if (hasCustomBackground) 0.30f else 0.42f)
+                            }
                         )
                     }
                 )
                 .clip(panelShape)
-                .drawWithContent {
-                    drawContent()
-                    val progress = sheenProgress.value
-                    val flashAlpha = 4f * progress * (1f - progress) * 0.72f
-                    if (flashAlpha > 0f) {
-                        val centerX = -size.width * 0.35f + progress * size.width * 1.7f
-                        drawRect(
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    Color.White.copy(alpha = 0.42f),
-                                    Color.Transparent
-                                ),
-                                start = Offset(centerX - size.width * 0.22f, 0f),
-                                end = Offset(centerX + size.width * 0.22f, size.height)
-                            ),
-                            alpha = flashAlpha
-                        )
-                    }
-                }
                 .pointerInput(actions, checkingUpdate) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         fun actionIndexAt(y: Float): Int? = actionBounds.entries
                             .firstOrNull { (_, bounds) -> y >= bounds.first && y <= bounds.second }
                             ?.key
-                            ?.takeUnless { actions[it].isUpdateAction && checkingUpdate }
+                            ?.takeUnless {
+                                !actions[it].enabled ||
+                                    (actions[it].isUpdateAction && checkingUpdate)
+                            }
 
                         slidingIndex = actionIndexAt(down.position.y)
                         while (true) {
@@ -405,7 +410,11 @@ private fun LiquidActionMenu(
         ) {
             actions.forEachIndexed { index, action ->
                 val isUpdateAction = action.isUpdateAction
-                val rowHeight = if (isUpdateAction && updateStatus.isNotBlank()) 54.dp else 44.dp
+                val rowHeight = when {
+                    action.isBackAction -> 40.dp
+                    isUpdateAction && updateStatus.isNotBlank() -> 54.dp
+                    else -> 44.dp
+                }
                 val itemProgress by animateFloatAsState(
                     targetValue = if (expanded) 1f else 0f,
                     animationSpec = tween(
@@ -436,7 +445,7 @@ private fun LiquidActionMenu(
                         .graphicsLayer {
                             val selectedScale = 1f + highlightProgress * 0.018f
                             val entryScale = 0.985f + itemProgress * 0.015f
-                            alpha = itemProgress
+                            alpha = itemProgress * if (action.enabled) 1f else 0.42f
                             translationY = -itemOffsetPx * (1f - itemProgress)
                             scaleX = selectedScale * entryScale
                             scaleY = selectedScale * entryScale
@@ -483,8 +492,14 @@ private fun LiquidActionMenu(
                     Image(
                         painter = painterResource(action.iconRes),
                         contentDescription = null,
-                        modifier = Modifier.size(21.dp),
-                        colorFilter = ColorFilter.tint(accentColor)
+                        modifier = Modifier
+                            .size(if (action.isBackAction) 18.dp else 21.dp)
+                            .graphicsLayer {
+                                if (action.isBackAction) rotationZ = 90f
+                            },
+                        colorFilter = ColorFilter.tint(
+                            accentColor.copy(alpha = if (action.enabled) 1f else 0.64f)
+                        )
                     )
                     Column(
                         Modifier
@@ -493,7 +508,11 @@ private fun LiquidActionMenu(
                     ) {
                         BasicText(
                             action.title,
-                            style = TextStyle(contentColor, 14.sp, FontWeight.Medium)
+                            style = TextStyle(
+                                contentColor.copy(alpha = if (action.enabled) 1f else 0.68f),
+                                14.sp,
+                                if (action.isBackAction) FontWeight.SemiBold else FontWeight.Medium
+                            )
                         )
                         if (isUpdateAction && updateStatus.isNotBlank()) {
                             BasicText(
@@ -502,6 +521,16 @@ private fun LiquidActionMenu(
                                 style = TextStyle(contentColor.copy(alpha = 0.64f), 10.sp)
                             )
                         }
+                    }
+                    if (action.hasSubmenu) {
+                        Image(
+                            painter = painterResource(R.drawable.ic_expand_chevron),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(14.dp)
+                                .graphicsLayer { rotationZ = -90f },
+                            colorFilter = ColorFilter.tint(contentColor.copy(alpha = 0.58f))
+                        )
                     }
                 }
                 if (action.dividerAfter) {
@@ -519,8 +548,8 @@ private fun LiquidActionMenu(
                                         Brush.horizontalGradient(
                                             listOf(
                                                 Color.Transparent,
-                                                accentColor.copy(alpha = 0.38f),
-                                                accentColor.copy(alpha = 0.38f),
+                                                themeColors.divider,
+                                                themeColors.divider,
                                                 Color.Transparent
                                             )
                                         )
@@ -553,8 +582,9 @@ private fun LiquidScoreTermDropdown(
     val density = LocalDensity.current
     val panelShape = RoundedCornerShape(22.dp)
     val itemShape = RoundedCornerShape(14.dp)
-    val contentColor = Color(0xFF171923)
-    val accentColor = Color(0xFF0088FF)
+    val themeColors = CampusComposeTheme.colors
+    val contentColor = themeColors.primaryText
+    val accentColor = themeColors.accent
     val scrollState = rememberScrollState()
     var slidingIndex by remember { mutableStateOf<Int?>(null) }
     val menuWidthDp = with(density) { menuWidth.toDp() }
@@ -575,18 +605,6 @@ private fun LiquidScoreTermDropdown(
         ),
         label = "scoreTermMenuReveal"
     )
-    val sheenProgress = remember { Animatable(0f) }
-    LaunchedEffect(expanded) {
-        if (expanded) {
-            sheenProgress.snapTo(0f)
-            sheenProgress.animateTo(
-                1f,
-                animationSpec = tween(420, easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f))
-            )
-        } else {
-            sheenProgress.snapTo(0f)
-        }
-    }
     val panelOffsetPx = with(density) { 7.dp.toPx() }
     val itemOffsetPx = with(density) { 5.dp.toPx() }
 
@@ -625,7 +643,7 @@ private fun LiquidScoreTermDropdown(
                     contentScale = ContentScale.FillBounds
                 )
             } else {
-                Box(Modifier.fillMaxSize().background(Color(0xFFE9EFF8)))
+                Box(Modifier.fillMaxSize().background(themeColors.pageBackground))
             }
         }
         Box(
@@ -651,34 +669,24 @@ private fun LiquidScoreTermDropdown(
                     shape = { RoundedRectangle(22.dp) },
                     effects = {
                         vibrancy()
-                        colorControls(brightness = 0.06f, saturation = 1.25f)
-                        blur(12.dp.toPx())
+                        colorControls(
+                            brightness = if (themeColors.isDark) 0f else 0.06f,
+                            saturation = if (themeColors.isDark) 0.52f else 1.25f
+                        )
+                        blur((if (themeColors.isDark) 8.dp else 12.dp).toPx())
                         lens(12.dp.toPx(), 24.dp.toPx(), depthEffect = true)
                     },
-                    highlight = { Highlight.Default.copy(alpha = 0.68f) },
-                    onDrawSurface = { drawRect(Color.White.copy(alpha = 0.30f)) }
-                )
-                .clip(panelShape)
-                .drawWithContent {
-                    drawContent()
-                    val progress = sheenProgress.value
-                    val flashAlpha = 4f * progress * (1f - progress) * 0.72f
-                    if (flashAlpha > 0f) {
-                        val centerX = -size.width * 0.35f + progress * size.width * 1.7f
+                    highlight = {
+                        Highlight.Default.copy(alpha = if (themeColors.isDark) 0.12f else 0.68f)
+                    },
+                    onDrawSurface = {
                         drawRect(
-                            brush = Brush.linearGradient(
-                                colors = listOf(
-                                    Color.Transparent,
-                                    Color.White.copy(alpha = 0.42f),
-                                    Color.Transparent
-                                ),
-                                start = Offset(centerX - size.width * 0.22f, 0f),
-                                end = Offset(centerX + size.width * 0.22f, size.height)
-                            ),
-                            alpha = flashAlpha
+                            if (themeColors.isDark) themeColors.glassStrongSurface
+                            else themeColors.glassSurface
                         )
                     }
-                }
+                )
+                .clip(panelShape)
                 .pointerInput(terms, scrollState.maxValue) {
                     val panelPadding = 6.dp.toPx()
                     val rowHeight = 44.dp.toPx()
@@ -766,8 +774,8 @@ private fun LiquidScoreTermDropdown(
                             .background(
                                 brush = Brush.linearGradient(
                                     colors = listOf(
-                                        Color.White.copy(alpha = if (active) 0.26f else 0f),
-                                        Color(0xFFB7DDF8).copy(alpha = if (active) 0.18f else 0f)
+                                        Color.White.copy(alpha = if (active) 0.18f else 0f),
+                                        accentColor.copy(alpha = if (active) 0.14f else 0f)
                                     )
                                 ),
                                 shape = itemShape

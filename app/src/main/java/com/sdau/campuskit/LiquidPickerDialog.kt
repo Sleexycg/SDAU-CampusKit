@@ -129,7 +129,7 @@ internal class LiquidPickerDialogView(
             ComposeView(context).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setContent {
+                setCampusContent {
                     LiquidPickerDialog(
                         pageSnapshot = pageSnapshot,
                         title = title,
@@ -160,14 +160,15 @@ private fun LiquidPickerDialog(
     highFrost: Boolean,
     onDismiss: () -> Unit
 ) {
-    val contentColor = Color(0xFF171923)
-    val accentColor = Color(0xFF0088FF)
+    val themeColors = CampusComposeTheme.colors
+    val contentColor = themeColors.primaryText
+    val accentColor = themeColors.accent
     val containerColor = if (highFrost) {
-        Color(0xFFF4F6FA).copy(alpha = 0.62f)
+        themeColors.glassStrongSurface
     } else {
-        Color(0xFFFAFAFA).copy(alpha = 0.42f)
+        themeColors.glassSurface
     }
-    val dimColor = Color(0xFF29293A).copy(alpha = 0.23f)
+    val dimColor = themeColors.dialogScrim
     val snapshotImage = remember(pageSnapshot) { pageSnapshot?.asImageBitmap() }
     val backdrop = rememberLayerBackdrop()
     val panelCorner = if (highFrost) 28.dp else 48.dp
@@ -186,7 +187,7 @@ private fun LiquidPickerDialog(
                     contentScale = ContentScale.FillBounds
                 )
             } else {
-                Box(Modifier.fillMaxSize().background(Color(0xFFE9EFF8)))
+                Box(Modifier.fillMaxSize().background(themeColors.pageBackground))
             }
             Box(Modifier.fillMaxSize().background(dimColor))
         }
@@ -208,7 +209,11 @@ private fun LiquidPickerDialog(
                     backdrop = backdrop,
                     shape = { RoundedRectangle(panelCorner) },
                     effects = {
-                        if (highFrost) {
+                        if (themeColors.isDark) {
+                            colorControls(brightness = 0f, saturation = 1.08f)
+                            blur(8.dp.toPx())
+                            lens(10.dp.toPx(), 20.dp.toPx(), depthEffect = true)
+                        } else if (highFrost) {
                             colorControls(brightness = 0.16f, saturation = 0.62f)
                             blur(20.dp.toPx())
                             lens(10.dp.toPx(), 20.dp.toPx(), depthEffect = true)
@@ -218,7 +223,9 @@ private fun LiquidPickerDialog(
                             lens(24.dp.toPx(), 48.dp.toPx(), depthEffect = true)
                         }
                     },
-                    highlight = { Highlight.Plain },
+                    highlight = {
+                        Highlight.Plain.copy(alpha = if (themeColors.isDark) 0.12f else 1f)
+                    },
                     onDrawSurface = { drawRect(containerColor) }
                 )
                 .clickable(
@@ -264,8 +271,16 @@ private fun LiquidPickerDialog(
                                 .background(
                                     brush = Brush.linearGradient(
                                         listOf(
-                                            Color.White.copy(alpha = if (option.selected) 0.52f else 0f),
-                                            Color(0xFFB7DDF8).copy(alpha = if (option.selected) 0.30f else 0f)
+                                            Color.White.copy(
+                                                alpha = if (option.selected) {
+                                                    if (themeColors.isDark) 0.12f else 0.52f
+                                                } else 0f
+                                            ),
+                                            accentColor.copy(
+                                                alpha = if (option.selected) {
+                                                    if (themeColors.isDark) 0.10f else 0.30f
+                                                } else 0f
+                                            )
                                         )
                                     ),
                                     shape = itemShape
@@ -351,5 +366,3 @@ private fun LiquidPickerDialog(
         }
     }
 }
-
-

@@ -7,6 +7,7 @@ import android.content.ContentValues
 import android.content.ActivityNotFoundException
 import android.content.BroadcastReceiver
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
@@ -64,6 +65,7 @@ import android.widget.TextView
 import android.widget.Toast
 import android.widget.ProgressBar
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
@@ -74,7 +76,6 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.material.card.MaterialCardView
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import org.json.JSONArray
@@ -100,6 +101,9 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
+    private val activeThemeColors: CampusAndroidColors
+        get() = campusAndroidColors(this)
+
     private class EmptyRoomPriorityScrollView(context: Context) : ScrollView(context) {
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
         private val density = resources.displayMetrics.density
@@ -176,11 +180,22 @@ class MainActivity : ComponentActivity() {
     private lateinit var studentId: TextInputEditText
     private lateinit var password: TextInputEditText
     private lateinit var semesterInput: MaterialAutoCompleteTextView
-    private var loginMode = LoginMode.PERSONAL
-    private var publicCollegeSelection = ""
-    private var publicGradeSelection = ""
-    private var publicMajorSelection = ""
-    private var publicClassSelection = ""
+    private val loginUiState = LoginUiState()
+    private var loginMode: LoginMode
+        get() = loginUiState.mode
+        set(value) { loginUiState.mode = value }
+    private var publicCollegeSelection: String
+        get() = loginUiState.college
+        set(value) { loginUiState.college = value }
+    private var publicGradeSelection: String
+        get() = loginUiState.grade
+        set(value) { loginUiState.grade = value }
+    private var publicMajorSelection: String
+        get() = loginUiState.major
+        set(value) { loginUiState.major = value }
+    private var publicClassSelection: String
+        get() = loginUiState.className
+        set(value) { loginUiState.className = value }
     private var viewingPublicSchedule = false
     private var publicScheduleCourses: List<Course> = emptyList()
     private var publicScheduleTerm = ""
@@ -196,14 +211,12 @@ class MainActivity : ComponentActivity() {
     private lateinit var publicMajorInput: MaterialAutoCompleteTextView
     private lateinit var publicClassInput: MaterialAutoCompleteTextView
     private var loginButton: LiquidTintedActionButtonView? = null
-    private var refreshScheduleButton: ImageButton? = null
+    private var scheduleHeader: ScheduleHeaderComposeView? = null
     private var scheduleRefreshRunning = false
     private var scheduleRefreshGeneration = 0
     private var academicSessionGeneration = 0
     private var loginStatus: TextView? = null
-    private var scheduleDate: TextView? = null
-    private var scheduleWeek: TextView? = null
-    private var scheduleVersion: TextView? = null
+    private var scheduleVersion: ScheduleVersionComposeView? = null
     private var scheduleGrid: ScheduleGridView? = null
     private var scheduleTextPalette = ScheduleTextPalette(
         primary = Color.rgb(28, 34, 48),
@@ -230,6 +243,8 @@ class MainActivity : ComponentActivity() {
     private var scoreDetailOverlay: LiquidScoreDetailDialogView? = null
     private var emptyRoomFilterOverlay: LiquidPickerDialogView? = null
     private var publicOptionOverlay: LiquidPickerDialogView? = null
+    private var appearanceOverlay: LiquidAppearanceDialogView? = null
+    private var refreshScheduleConfirmOverlay: LiquidConfirmDialogView? = null
     private var shareOverlay: View? = null
     private var actionMenuOverlay: LiquidActionMenuView? = null
     private var backgroundEditorOverlay: LiquidBackgroundEditorView? = null
@@ -252,6 +267,8 @@ class MainActivity : ComponentActivity() {
     private var courseDialogCapturePending = false
     private var emptyRoomFilterCapturePending = false
     private var publicOptionPickerCapturePending = false
+    private var appearanceCapturePending = false
+    private var refreshScheduleConfirmCapturePending = false
     private var updateDownloadId: Long? = null
     private var updateDownloadReceiverRegistered = false
     private val updateDownloadReceiver = object : BroadcastReceiver() {
@@ -350,16 +367,19 @@ class MainActivity : ComponentActivity() {
         val recordCount: Int,
         val sourceSha256: String
     )
-    private enum class LoginMode { PERSONAL, PUBLIC }
-
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        CampusThemeController.initialize(this)
         pushEnabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_PUSH_ENABLED, false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(true)
         }
-        pageHost = FrameLayout(this).apply { setBackgroundColor(PAGE_BACKGROUND) }
-        setContentView(pageHost)
+        pageHost = FrameLayout(this).apply { setBackgroundColor(campusAndroidColors(this@MainActivity).pageBackground) }
+        setContent {
+            CampusComposeTheme {
+                CampusAppRoot(pageHost)
+            }
+        }
         CourseWidgetProvider.cancelLegacyNetworkRefresh(this)
         startPublicScheduleSyncIfNeeded(inferredCurrentTerm())
         if (hasLocalCourseCache()) showSchedulePage() else showLoginPage(false)
@@ -752,7 +772,7 @@ class MainActivity : ComponentActivity() {
         academicSessionGeneration++
         scheduleRefreshGeneration++
         scheduleRefreshRunning = false
-        refreshScheduleButton = null
+        scheduleHeader = null
         scoresLoading = false
         examsLoading = false
         scoreLoadError = null
@@ -764,12 +784,9 @@ class MainActivity : ComponentActivity() {
         publicScheduleTerm = ""
         publicScheduleLabel = ""
         publicScheduleClassName = ""
-        publicCollegeSelection = ""
-        publicGradeSelection = ""
-        publicMajorSelection = ""
-        publicClassSelection = ""
+        loginUiState.resetPublicSelection()
         onLoginPage = true
-        setSystemBars(PAGE_BACKGROUND)
+        setSystemBars(campusAndroidColors(this).pageBackground)
         cancelSystemCourseReminder()
         emptyRoomRequestGeneration++
         emptyRoomsLoading = false
@@ -806,7 +823,6 @@ class MainActivity : ComponentActivity() {
         scheduleMode = ScheduleTimePolicy.currentMode()
         onLoginPage = false
         hideKeyboard()
-        val immersiveBackground = hasCustomBackground()
         val account = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_ACCOUNT, "").orEmpty()
         if (account == "114514") {
             // 演示数据随版本代码更新，避免旧安装继续读取之前缓存的地点。
@@ -817,9 +833,10 @@ class MainActivity : ComponentActivity() {
         currentWeek = weekForTerm(if (viewingPublicSchedule) publicScheduleTerm else selectedTerm())
         if (emptyRoomResult == null) syncEmptyRoomDefaultsToNow()
         currentMainSection = 0
-        setSystemBars(if (immersiveBackground) Color.TRANSPARENT else GRADIENT_START)
-        window.navigationBarColor = GRADIENT_END
-        WindowCompat.setDecorFitsSystemWindows(window, !immersiveBackground)
+        val themeColors = campusAndroidColors(this)
+        setSystemBars(Color.TRANSPARENT)
+        window.navigationBarColor = themeColors.gradient.last()
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         val schedulePage = buildSchedulePage()
         applyScheduleStatusBarAppearance()
         swapPage(schedulePage, true, animate)
@@ -947,8 +964,10 @@ class MainActivity : ComponentActivity() {
             window.isNavigationBarContrastEnforced = false
             window.navigationBarDividerColor = color
         }
-        var flags = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) flags = flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        var flags = if (activeThemeColors.isDark) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !activeThemeColors.isDark) {
+            flags = flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
         window.decorView.systemUiVisibility = flags
         hideSystemNavigationBar()
     }
@@ -978,12 +997,16 @@ class MainActivity : ComponentActivity() {
             .withEndAction { pageHost.removeView(previous) }.start()
     }
 
-    private fun buildLoginPage(): View {
+    private fun buildLoginPage(): View = composeHostView(this) {
+        LegacyScreenHost(::buildLegacyLoginPage)
+    }
+
+    private fun buildLegacyLoginPage(): View {
         val scroll = ScheduleScrollView(this).apply {
             isFillViewport = true
             clipToPadding = false
             overScrollMode = View.OVER_SCROLL_NEVER
-            setBackgroundColor(PUBLIC_PAGE_BACKGROUND)
+            background = SilkyGradientDrawable()
         }
         val viewport = verticalLayout().apply {
             gravity = Gravity.CENTER
@@ -992,9 +1015,9 @@ class MainActivity : ComponentActivity() {
         scroll.addView(viewport, FrameLayout.LayoutParams(-1, -2))
 
         val card = surfaceCard(dp(28f).toFloat()).apply {
-            setCardBackgroundColor(PUBLIC_SURFACE)
-            setStrokeColor(PUBLIC_CARD_OUTLINE)
-            cardElevation = dp(2).toFloat()
+            setCardBackgroundColor(campusAndroidColors(this@MainActivity).surface)
+            setStrokeColor(campusAndroidColors(this@MainActivity).cardOutline)
+            cardElevation = if (activeThemeColors.isDark) 0f else dp(2).toFloat()
         }
         lateinit var modeToggle: LoginModeToggle
         val body = LoginSwipeLayout(
@@ -1013,7 +1036,7 @@ class MainActivity : ComponentActivity() {
             },
             onModeSettled = { mode -> modeToggle.setSettledMode(mode) }
         ).apply { setPadding(dp(24), dp(24), dp(24), dp(22)) }
-        body.addView(text("登录", 28f, TEXT_PRIMARY, Typeface.BOLD), spacedParams(dp(8)))
+        body.addView(text("登录", 28f, campusAndroidColors(this).primaryText, Typeface.BOLD), spacedParams(dp(8)))
 
         modeToggle = LoginModeToggle(
             context = this,
@@ -1080,17 +1103,14 @@ class MainActivity : ComponentActivity() {
             val selectedTerm = savedTerm?.takeIf { it in semesterOptions } ?: semesterOptions.first()
             semesterInput.setText(selectedTerm, false)
             form.addView(publicFormField("学期", semesterInput, semesterOptions, selectedTerm) { semester ->
-                publicCollegeSelection = ""
-                publicGradeSelection = ""
-                publicMajorSelection = ""
-                publicClassSelection = ""
+                loginUiState.resetPublicSelection()
                 startPublicScheduleSyncIfNeeded(semester)
                 swapPage(buildLoginPage(), false, false)
             }, spacedParams(dp(14)))
             buildPublicFilterFields(form, selectedTerm)
         }
 
-        loginStatus = text("", 13f, ERROR, Typeface.NORMAL).apply {
+        loginStatus = text("", 13f, campusAndroidColors(this).error, Typeface.NORMAL).apply {
             visibility = View.GONE
             setLineSpacing(dp(2).toFloat(), 1f)
         }
@@ -1258,7 +1278,7 @@ class MainActivity : ComponentActivity() {
         }
         val field = MaterialAutoCompleteTextView(this).apply {
             setText(selected.takeIf { it in options }.orEmpty(), false)
-            setTextColor(TEXT_PRIMARY)
+            setTextColor(campusAndroidColors(this@MainActivity).primaryText)
             textSize = 18f
             inputType = InputType.TYPE_NULL
             isFocusable = false
@@ -1342,7 +1362,7 @@ class MainActivity : ComponentActivity() {
             body.addView(text(
                 "正在后台准备全校课表筛选，完成后会自动显示",
                 13f,
-                TEXT_SECONDARY,
+                campusAndroidColors(this).secondaryText,
                 Typeface.NORMAL
             ).apply {
                 setLineSpacing(dp(3).toFloat(), 1f)
@@ -1365,39 +1385,30 @@ class MainActivity : ComponentActivity() {
         val classes = majorMap[major].orEmpty().sorted()
         val className = choosePublicOption(publicClassSelection, classes, listOf("农基2601"))
 
-        publicCollegeSelection = college
-        publicGradeSelection = grade
-        publicMajorSelection = major
-        publicClassSelection = className
+        loginUiState.resolvePublicSelection(college, grade, major, className)
 
         publicCollegeInput = MaterialAutoCompleteTextView(this)
         body.addView(publicFormField("学院", publicCollegeInput, colleges, college) {
-            publicCollegeSelection = it
-            publicGradeSelection = ""
-            publicMajorSelection = ""
-            publicClassSelection = ""
+            loginUiState.selectCollege(it)
             swapPage(buildLoginPage(), false, false)
         }, spacedParams(dp(14)))
         publicGradeInput = MaterialAutoCompleteTextView(this)
         body.addView(publicFormField("年级", publicGradeInput, grades, grade) {
-            publicGradeSelection = it
-            publicMajorSelection = ""
-            publicClassSelection = ""
+            loginUiState.selectGrade(it)
             swapPage(buildLoginPage(), false, false)
         }, spacedParams(dp(14)))
         publicMajorInput = MaterialAutoCompleteTextView(this)
         body.addView(publicFormField("专业", publicMajorInput, majors, major) {
-            publicMajorSelection = it
-            publicClassSelection = ""
+            loginUiState.selectMajor(it)
             swapPage(buildLoginPage(), false, false)
         }, spacedParams(dp(14)))
         publicClassInput = MaterialAutoCompleteTextView(this)
         body.addView(publicFormField("班级", publicClassInput, classes, className) {
-            publicClassSelection = it
+            loginUiState.selectClass(it)
             swapPage(buildLoginPage(), false, false)
         }, spacedParams(dp(14)))
         if (index.recordCount == 0) {
-            body.addView(text("全校课表正在准备，准备完成后可筛选查询", 13f, TEXT_SECONDARY, Typeface.NORMAL).apply {
+            body.addView(text("全校课表正在准备，准备完成后可筛选查询", 13f, campusAndroidColors(this).secondaryText, Typeface.NORMAL).apply {
                 setLineSpacing(dp(3).toFloat(), 1f)
             }, spacedParams(dp(8)))
         }
@@ -1498,9 +1509,15 @@ class MainActivity : ComponentActivity() {
         val navigationVisibleHeight = dp(54)
         val navigationHostHeight = dp(116)
         val navigationBottomMargin = dp(16)
+        val initialSection = when (currentMainSection) {
+            1 -> buildExamSection()
+            2 -> buildGradesSection()
+            3 -> buildEmptyRoomSection()
+            else -> buildScheduleSection()
+        }
         val sectionHost = FrameLayout(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
-            addView(buildScheduleSection(), FrameLayout.LayoutParams(-1, -1))
+            addView(initialSection, FrameLayout.LayoutParams(-1, -1))
         }
         mainSectionHost = sectionHost
         val sectionBottomMargin = navigationVisibleHeight + navigationBottomMargin + dp(4)
@@ -1521,18 +1538,16 @@ class MainActivity : ComponentActivity() {
             bottomMargin = 0
         }
         page.addView(navigation, navigationLayoutParams)
-        if (customBackground != null) {
-            ViewCompat.setOnApplyWindowInsetsListener(page) { _, insets ->
-                val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-                sectionHost.setPadding(0, systemBars.top, 0, 0)
-                sectionLayoutParams.bottomMargin = sectionBottomMargin + systemBars.bottom
-                sectionHost.layoutParams = sectionLayoutParams
-                navigationLayoutParams.bottomMargin = systemBars.bottom
-                navigation.layoutParams = navigationLayoutParams
-                insets
-            }
-            page.post { ViewCompat.requestApplyInsets(page) }
+        ViewCompat.setOnApplyWindowInsetsListener(page) { _, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            sectionHost.setPadding(0, systemBars.top, 0, 0)
+            sectionLayoutParams.bottomMargin = sectionBottomMargin + systemBars.bottom
+            navigationLayoutParams.bottomMargin = systemBars.bottom
+            sectionHost.layoutParams = sectionLayoutParams
+            navigation.layoutParams = navigationLayoutParams
+            insets
         }
+        page.post { ViewCompat.requestApplyInsets(page) }
         return page
     }
 
@@ -1545,16 +1560,11 @@ class MainActivity : ComponentActivity() {
         scheduleGrid?.setWeekIndex(currentWeek)
         content.addView(scheduleGrid, LinearLayout.LayoutParams(-1, 0, 1f))
         section.addView(content, FrameLayout.LayoutParams(-1, -1))
-        val versionLabel = text(
-            appDisplayVersion,
-            10f,
-            scheduleTextPalette.secondary,
-            if (scheduleTextPalette.adaptive) Typeface.BOLD else Typeface.NORMAL
-        ).apply {
-            gravity = Gravity.CENTER
-            includeFontPadding = false
-            applyScheduleTextHalo()
-        }
+        val versionLabel = ScheduleVersionComposeView(
+            context = this,
+            version = appDisplayVersion,
+            initialPalette = scheduleTextPalette
+        )
         scheduleVersion = versionLabel
         section.addView(versionLabel, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply {
             rightMargin = dp(10)
@@ -1771,14 +1781,14 @@ class MainActivity : ComponentActivity() {
             examsLoading || (!hasLoaded && error.isNullOrBlank()) -> verticalLayout().apply {
                 gravity = Gravity.CENTER
                 addView(ProgressBar(this@MainActivity).apply {
-                    indeterminateTintList = ColorStateList.valueOf(THEME_BLUE)
+                    indeterminateTintList = ColorStateList.valueOf(activeThemeColors.accent)
                     contentDescription = "正在加载考试安排"
                 }, LinearLayout.LayoutParams(dp(34), dp(34)))
             }
             !error.isNullOrBlank() -> verticalLayout().apply {
                 gravity = Gravity.CENTER
                 setPadding(dp(22), dp(20), dp(22), dp(20))
-                addView(text("!", 20f, ERROR, Typeface.BOLD).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(48), dp(42)))
+                addView(text("!", 20f, activeThemeColors.error, Typeface.BOLD).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(48), dp(42)))
                 addView(text(error, 14f, scheduleTextPalette.secondary, secondaryTextTypeface()).apply {
                     gravity = Gravity.CENTER
                     setLineSpacing(dp(3).toFloat(), 1f)
@@ -1980,7 +1990,7 @@ class MainActivity : ComponentActivity() {
                         gravity = Gravity.CENTER
                         addView(ProgressBar(this@MainActivity).apply {
                             isIndeterminate = true
-                            indeterminateTintList = ColorStateList.valueOf(THEME_BLUE)
+                            indeterminateTintList = ColorStateList.valueOf(activeThemeColors.accent)
                             contentDescription = "正在查询空教室"
                         }, LinearLayout.LayoutParams(dp(36), dp(36)))
                         addView(text(
@@ -2000,7 +2010,7 @@ class MainActivity : ComponentActivity() {
                     val errorView = verticalLayout().apply {
                         gravity = Gravity.CENTER
                         setPadding(dp(22), dp(32), dp(22), dp(32))
-                        addView(text("!", 21f, ERROR, Typeface.BOLD).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(50), dp(44)).apply {
+                        addView(text("!", 21f, activeThemeColors.error, Typeface.BOLD).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(50), dp(44)).apply {
                             bottomMargin = dp(8)
                         })
                         addView(text(
@@ -2054,7 +2064,7 @@ class MainActivity : ComponentActivity() {
         }, LinearLayout.LayoutParams(0, -2, 1f))
         val queryButton = ImageButton(this@MainActivity).apply {
             setImageResource(R.drawable.ic_search_room)
-            imageTintList = ColorStateList.valueOf(THEME_BLUE)
+            imageTintList = ColorStateList.valueOf(activeThemeColors.accent)
             scaleType = ImageView.ScaleType.CENTER
             setPadding(dp(5), dp(5), dp(5), dp(5))
             contentDescription = if (emptyRoomsLoading) "正在查询空教室" else "查询空教室"
@@ -2155,7 +2165,7 @@ class MainActivity : ComponentActivity() {
 
     private fun emptyRoomCollapseButton(expanded: Boolean, targetName: String): ImageButton = ImageButton(this).apply {
         setImageResource(R.drawable.ic_expand_chevron)
-        imageTintList = ColorStateList.valueOf(THEME_BLUE)
+        imageTintList = ColorStateList.valueOf(activeThemeColors.accent)
         scaleType = ImageView.ScaleType.CENTER
         setPadding(dp(5), dp(5), dp(5), dp(5))
         background = ColorDrawable(Color.TRANSPARENT)
@@ -2265,8 +2275,16 @@ class MainActivity : ComponentActivity() {
     ): View = MaterialCardView(this).apply {
         radius = dp(15f).toFloat()
         cardElevation = 0f
+        maxCardElevation = 0f
+        translationZ = 0f
+        stateListAnimator = null
         strokeWidth = 0
-        setCardBackgroundColor(Color.argb(102, 255, 255, 255))
+        if (activeThemeColors.isDark) {
+            // 与账号输入框统一：不做悬浮色块，仅保留下方分隔线。
+            setCardBackgroundColor(Color.TRANSPARENT)
+        } else {
+            setCardBackgroundColor(Color.argb(102, 255, 255, 255))
+        }
         isClickable = enabled
         isEnabled = enabled
         alpha = if (enabled) 1f else .55f
@@ -2275,12 +2293,12 @@ class MainActivity : ComponentActivity() {
         val content = verticalLayout().apply { setPadding(dp(13), dp(10), dp(11), dp(10)) }
         val labelTextSize = if (showBottomDivider) 13f else 11f
         val valueTextSize = if (showBottomDivider) 15.5f else 13.5f
-        content.addView(text(label, labelTextSize, TEXT_SECONDARY, Typeface.NORMAL), spacedParams(dp(5)))
+        content.addView(text(label, labelTextSize, activeThemeColors.secondaryText, Typeface.NORMAL), spacedParams(dp(5)))
         val valueRow = horizontalLayout().apply { gravity = Gravity.CENTER_VERTICAL }
         val displayValue = value.ifBlank { "请选择" }
         val valueView = field?.apply {
             setText(value, false)
-            setTextColor(TEXT_PRIMARY)
+            setTextColor(activeThemeColors.primaryText)
             textSize = valueTextSize
             setTypeface(Typeface.DEFAULT, Typeface.BOLD)
             inputType = InputType.TYPE_NULL
@@ -2294,20 +2312,20 @@ class MainActivity : ComponentActivity() {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             setOnClickListener { if (enabled) onClick() }
-        } ?: text(displayValue, valueTextSize, TEXT_PRIMARY, Typeface.BOLD).apply {
+        } ?: text(displayValue, valueTextSize, activeThemeColors.primaryText, Typeface.BOLD).apply {
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
         valueRow.addView(valueView, LinearLayout.LayoutParams(0, -2, 1f))
         if (!showBottomDivider) {
-            valueRow.addView(text("⌄", 14f, TEXT_SECONDARY, Typeface.NORMAL).apply {
+            valueRow.addView(text("⌄", 14f, activeThemeColors.secondaryText, Typeface.NORMAL).apply {
                 gravity = Gravity.CENTER
             }, LinearLayout.LayoutParams(dp(18), -2))
         }
         content.addView(valueRow, matchWrapParams())
         if (showBottomDivider) {
             content.addView(View(this@MainActivity).apply {
-                setBackgroundColor(PUBLIC_FIELD_DIVIDER)
+                setBackgroundColor(activeThemeColors.fieldDivider)
             }, LinearLayout.LayoutParams(-1, dp(1)).apply {
                 topMargin = dp(8)
             })
@@ -2318,9 +2336,14 @@ class MainActivity : ComponentActivity() {
     private fun emptyRoomResultSurface(): MaterialCardView = MaterialCardView(this).apply {
         radius = dp(23f).toFloat()
         cardElevation = 0f
-        strokeWidth = dp(1)
-        strokeColor = Color.argb(92, 255, 255, 255)
-        setCardBackgroundColor(Color.argb(104, 216, 225, 242))
+        if (activeThemeColors.isDark) {
+            strokeWidth = 0
+            setCardBackgroundColor(Color.rgb(31, 31, 33))
+        } else {
+            strokeWidth = dp(1)
+            strokeColor = Color.argb(92, 255, 255, 255)
+            setCardBackgroundColor(Color.argb(104, 216, 225, 242))
+        }
     }
 
     private fun buildEmptyRoomResults(
@@ -2684,11 +2707,11 @@ class MainActivity : ComponentActivity() {
     private fun scoreColor(value: String): Int {
         val number = value.trim().toDoubleOrNull()
         return when {
-            number != null && number < 60 -> ERROR
+            number != null && number < 60 -> activeThemeColors.error
             number != null && number >= 80 -> Color.rgb(41, 132, 91)
             number != null -> Color.rgb(177, 117, 28)
-            value.contains("不及格") || value.contains("不合格") -> ERROR
-            else -> PRIMARY_DARK
+            value.contains("不及格") || value.contains("不合格") -> activeThemeColors.error
+            else -> activeThemeColors.primary
         }
     }
 
@@ -3015,7 +3038,7 @@ class MainActivity : ComponentActivity() {
             error != null -> verticalLayout().apply {
                 gravity = Gravity.CENTER
                 setPadding(dp(22), dp(20), dp(22), dp(20))
-                addView(text("!", 22f, ERROR, Typeface.BOLD).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(52), dp(44)).apply { bottomMargin = dp(10) })
+                addView(text("!", 22f, activeThemeColors.error, Typeface.BOLD).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(52), dp(44)).apply { bottomMargin = dp(10) })
                 addView(text(error, 14f, scheduleTextPalette.secondary, secondaryTextTypeface()).apply {
                     gravity = Gravity.CENTER
                     setLineSpacing(dp(4).toFloat(), 1f)
@@ -3031,7 +3054,7 @@ class MainActivity : ComponentActivity() {
                 gravity = Gravity.CENTER
                 addView(ProgressBar(this@MainActivity).apply {
                     isIndeterminate = true
-                    indeterminateTintList = ColorStateList.valueOf(THEME_BLUE)
+                    indeterminateTintList = ColorStateList.valueOf(activeThemeColors.accent)
                     contentDescription = "加载成绩"
                 }, LinearLayout.LayoutParams(dp(38), dp(38)))
             }
@@ -3134,67 +3157,68 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun buildScheduleHeader(): View {
-        val header = verticalLayout().apply {
-            setBackgroundColor(Color.TRANSPARENT)
-            setPadding(dp(20), dp(10), dp(4), dp(8))
-        }
-        val row = horizontalLayout().apply { gravity = Gravity.CENTER_VERTICAL }
-        val group = verticalLayout()
-        scheduleDate = fixedAdaptiveText(
-            if (viewingPublicSchedule) publicScheduleClassName else todayLabel(),
-            26f,
-            20f,
-            scheduleTextPalette.primary,
-            Typeface.BOLD
-        ).apply { applyScheduleTextHalo() }
-        scheduleWeek = fixedAdaptiveText(
-            formatWeekLabel(currentWeek),
-            13f,
-            11f,
-            scheduleTextPalette.primary,
-            if (scheduleTextPalette.adaptive) Typeface.BOLD else Typeface.NORMAL
-        ).apply { applyScheduleTextHalo() }
-        group.addView(scheduleDate, spacedParams(dp(7)))
-        group.addView(scheduleWeek, matchWrapParams())
-        row.addView(group, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(ImageButton(this).apply {
-            setImageResource(R.drawable.ic_menu_login)
-            contentDescription = "退出登录"
-            setBackgroundColor(Color.TRANSPARENT)
-            setPadding(dp(11), dp(10), dp(11), dp(10))
-            setOnClickListener { showLoginPage(true) }
-        }, LinearLayout.LayoutParams(dp(48), dp(44)))
-        if (!viewingPublicSchedule) {
-            row.addView(ImageButton(this).apply {
-                refreshScheduleButton = this
-                setImageResource(R.drawable.ic_menu_refresh)
-                contentDescription = "刷新课表"
-                setBackgroundColor(Color.TRANSPARENT)
-                setPadding(dp(11), dp(10), dp(11), dp(10))
-                setOnClickListener { showRefreshScheduleConfirmation() }
-            }, LinearLayout.LayoutParams(dp(48), dp(44)))
-        } else {
-            refreshScheduleButton = null
-        }
-        row.addView(ImageButton(this).apply {
-            setImageResource(R.drawable.ic_more)
-            contentDescription = "更多操作"
-            setBackgroundColor(Color.TRANSPARENT)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            setOnClickListener { showUpdateMenu(this) }
-        }, LinearLayout.LayoutParams(dp(56), dp(44)))
-        header.addView(row, spacedParams(dp(6)))
-        return header
+        return ScheduleHeaderComposeView(
+            context = this,
+            initialDate = if (viewingPublicSchedule) publicScheduleClassName else todayLabel(),
+            initialWeek = formatWeekLabel(currentWeek),
+            initialPalette = scheduleTextPalette,
+            showRefresh = !viewingPublicSchedule,
+            onLogout = { showLoginPage(true) },
+            onRefresh = { showRefreshScheduleConfirmation() },
+            onMore = ::showUpdateMenu
+        ).also { scheduleHeader = it }
     }
 
     private fun showRefreshScheduleConfirmation() {
-        if (scheduleRefreshRunning || viewingPublicSchedule) return
-        MaterialAlertDialogBuilder(this)
-            .setTitle("更新课表")
-            .setMessage("是否从教务系统重新获取并更新当前学期课表？")
-            .setNegativeButton("取消", null)
-            .setPositiveButton("确认更新") { _, _ -> refreshPersonalSchedule() }
-            .show()
+        if (
+            scheduleRefreshRunning || viewingPublicSchedule ||
+            refreshScheduleConfirmOverlay != null || refreshScheduleConfirmCapturePending
+        ) return
+        refreshScheduleConfirmCapturePending = true
+        captureUpdateBackdrop { pageSnapshot ->
+            refreshScheduleConfirmCapturePending = false
+            if (
+                isFinishing || isDestroyed || viewingPublicSchedule || scheduleRefreshRunning ||
+                refreshScheduleConfirmOverlay != null
+            ) {
+                pageSnapshot?.takeUnless(Bitmap::isRecycled)?.recycle()
+                return@captureUpdateBackdrop
+            }
+            val dialog = LiquidConfirmDialogView(
+                context = this,
+                pageSnapshot = pageSnapshot,
+                title = "更新课表",
+                message = "是否从教务系统重新获取并更新当前学期课表？",
+                cancelLabel = "取消",
+                confirmLabel = "确认更新",
+                onDismiss = { hideRefreshScheduleConfirmation() },
+                onConfirm = {
+                    hideRefreshScheduleConfirmation {
+                        refreshPersonalSchedule()
+                    }
+                }
+            )
+            pageHost.addView(dialog, matchParentParams())
+            refreshScheduleConfirmOverlay = dialog
+            dialog.alpha = 0f
+            dialog.animate().alpha(1f).setDuration(180).start()
+        }
+    }
+
+    private fun hideRefreshScheduleConfirmation(afterDismiss: (() -> Unit)? = null) {
+        val overlay = refreshScheduleConfirmOverlay
+        if (overlay == null) {
+            afterDismiss?.invoke()
+            return
+        }
+        overlay.animate().alpha(0f).setDuration(140).withEndAction {
+            pageHost.removeView(overlay)
+            overlay.releaseSnapshot()
+            if (refreshScheduleConfirmOverlay === overlay) {
+                refreshScheduleConfirmOverlay = null
+            }
+            afterDismiss?.invoke()
+        }.start()
     }
 
     private fun refreshPersonalSchedule() {
@@ -3212,8 +3236,16 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (account == "114514") {
-            saveCourseCache(sampleCourses())
-            scheduleGrid?.setCourses(loadCourseCache())
+            val refreshedCourses = recolorCourses(
+                sampleCourses() + loadCustomCourseCache(),
+                term = term,
+                refreshMapping = true
+            )
+            saveCourseCache(refreshedCourses, account, term)
+            if (refreshedCourses.any(Course::isCustom)) {
+                saveCustomCourseCache(refreshedCourses)
+            }
+            scheduleGrid?.setCourses(refreshedCourses)
             showLiquidToast("课表已更新", LiquidToastVisual.SUCCESS, 1_800L)
             return
         }
@@ -3221,35 +3253,41 @@ class MainActivity : ComponentActivity() {
         val requestGeneration = ++scheduleRefreshGeneration
         val sessionGeneration = academicSessionGeneration
         scheduleRefreshRunning = true
-        refreshScheduleButton?.apply {
-            isEnabled = false
-            alpha = .5f
-        }
+        scheduleHeader?.setRefreshRunning(true)
         showLiquidToast("正在从教务系统更新课表…", LiquidToastVisual.LOADING, 0L)
         networkExecutor.execute {
             try {
-                val remoteCourses = SdauCourseRepository().queryCourses(account, password, term)
-                val courses = recolorCourses(remoteCourses.map { remote ->
-                    Course(
-                        remote.day,
-                        remote.startSlot,
-                        remote.slotCount,
-                        remote.name,
-                        remote.room,
-                        remote.teacher,
-                        COURSE_COLORS.first(),
-                        Color.WHITE,
-                        remote.weeks
-                    )
-                })
+                val coursesFromSystem = SdauCourseRepository()
+                    .queryCourses(account, password, term)
+                    .map { remote ->
+                        Course(
+                            remote.day,
+                            remote.startSlot,
+                            remote.slotCount,
+                            remote.name,
+                            remote.room,
+                            remote.teacher,
+                            COURSE_COLORS.first(),
+                            Color.WHITE,
+                            remote.weeks
+                        )
+                    }
                 runOnUiThread {
                     if (
                         requestGeneration != scheduleRefreshGeneration ||
                         sessionGeneration != academicSessionGeneration ||
                         !isActiveAcademicSession(account, term)
                     ) return@runOnUiThread
-                    saveCourseCache(courses, account, term)
-                    scheduleGrid?.setCourses(loadCourseCache())
+                    val refreshedCourses = recolorCourses(
+                        coursesFromSystem + loadCustomCourseCache(),
+                        term = term,
+                        refreshMapping = true
+                    )
+                    saveCourseCache(refreshedCourses, account, term)
+                    if (refreshedCourses.any(Course::isCustom)) {
+                        saveCustomCourseCache(refreshedCourses)
+                    }
+                    scheduleGrid?.setCourses(refreshedCourses)
                     showLiquidToast("课表已更新", LiquidToastVisual.SUCCESS, 2_000L)
                 }
             } catch (error: Exception) {
@@ -3269,33 +3307,20 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     if (requestGeneration != scheduleRefreshGeneration) return@runOnUiThread
                     scheduleRefreshRunning = false
-                    refreshScheduleButton?.apply {
-                        isEnabled = true
-                        alpha = 1f
-                    }
+                    scheduleHeader?.setRefreshRunning(false)
                 }
             }
         }
     }
 
-    private fun showUpdateMenu(anchor: View, fromBottom: Boolean = false) {
+    private fun showUpdateMenu(anchorBoundsInWindow: Rect) {
         if (actionMenuOverlay != null || actionMenuCapturePending) return
         val hostLocation = IntArray(2)
-        val anchorLocation = IntArray(2)
         pageHost.getLocationInWindow(hostLocation)
-        anchor.getLocationInWindow(anchorLocation)
         val menuWidth = dp(204)
-        val menuX = if (fromBottom) {
-            (pageHost.width - menuWidth - dp(18)).coerceAtLeast(dp(12))
-        } else {
-            (anchorLocation[0] - hostLocation[0] + anchor.width - menuWidth)
-                .coerceIn(dp(12), (pageHost.width - menuWidth - dp(12)).coerceAtLeast(dp(12)))
-        }
-        val menuY = if (fromBottom) {
-            (pageHost.height - dp(350)).coerceAtLeast(dp(12))
-        } else {
-            (anchorLocation[1] - hostLocation[1] + anchor.height + dp(4)).coerceAtLeast(dp(12))
-        }
+        val menuX = (anchorBoundsInWindow.right - hostLocation[0] - menuWidth)
+            .coerceIn(dp(12), (pageHost.width - menuWidth - dp(12)).coerceAtLeast(dp(12)))
+        val menuY = (anchorBoundsInWindow.bottom - hostLocation[1] + dp(4)).coerceAtLeast(dp(12))
 
         actionMenuCapturePending = true
         captureUpdateBackdrop { pageSnapshot ->
@@ -3305,6 +3330,7 @@ class MainActivity : ComponentActivity() {
                 return@captureUpdateBackdrop
             }
             lateinit var menu: LiquidActionMenuView
+            val customBackgroundAvailable = hasCustomBackground()
             val actions = buildList {
                 add(
                     LiquidMenuAction(
@@ -3350,37 +3376,56 @@ class MainActivity : ComponentActivity() {
                 )
                 add(
                     LiquidMenuAction(
-                        title = "选择背景图片",
-                        iconRes = R.drawable.ic_menu_background,
-                        onClick = {
-                            hideActionMenu { backgroundPicker.launch(arrayOf("image/*")) }
-                        }
+                        title = "外观",
+                        iconRes = R.drawable.ic_menu_appearance,
+                        onClick = { hideActionMenu { showAppearanceDialog() } }
                     )
                 )
-                if (hasCustomBackground()) {
-                    add(
-                        LiquidMenuAction(
-                            title = "调整背景",
-                            iconRes = R.drawable.ic_menu_background_adjust,
-                            onClick = { hideActionMenu { showExistingBackgroundEditor() } }
-                        )
+                add(
+                    LiquidMenuAction(
+                        title = "设置背景",
+                        iconRes = R.drawable.ic_menu_background,
+                        hasSubmenu = true,
+                        onClick = { menu.showBackgroundActions() }
                     )
-                    add(
-                        LiquidMenuAction(
-                            title = "恢复默认背景",
-                            iconRes = R.drawable.ic_menu_restore,
-                            onClick = { hideActionMenu { clearCustomBackground() } }
-                        )
-                    )
-                }
+                )
             }
+            val backgroundActions = listOf(
+                LiquidMenuAction(
+                    title = "背景设置",
+                    iconRes = R.drawable.ic_expand_chevron,
+                    isBackAction = true,
+                    dividerAfter = true,
+                    onClick = { menu.showRootActions() }
+                ),
+                LiquidMenuAction(
+                    title = "选择背景图片",
+                    iconRes = R.drawable.ic_menu_background,
+                    onClick = {
+                        hideActionMenu { backgroundPicker.launch(arrayOf("image/*")) }
+                    }
+                ),
+                LiquidMenuAction(
+                    title = "调整背景",
+                    iconRes = R.drawable.ic_menu_background_adjust,
+                    enabled = customBackgroundAvailable,
+                    onClick = { hideActionMenu { showExistingBackgroundEditor() } }
+                ),
+                LiquidMenuAction(
+                    title = "恢复默认背景",
+                    iconRes = R.drawable.ic_menu_restore,
+                    enabled = customBackgroundAvailable,
+                    onClick = { hideActionMenu { clearCustomBackground() } }
+                )
+            )
             menu = LiquidActionMenuView(
                 context = this,
                 pageSnapshot = pageSnapshot,
                 menuX = menuX,
                 menuY = menuY,
                 actions = actions,
-                hasCustomBackground = hasCustomBackground(),
+                backgroundActions = backgroundActions,
+                hasCustomBackground = customBackgroundAvailable,
                 onDismiss = { hideActionMenu() }
             )
             pageHost.addView(menu, matchParentParams())
@@ -3402,6 +3447,87 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun showAppearanceDialog() {
+        if (appearanceOverlay != null || appearanceCapturePending) return
+        appearanceCapturePending = true
+        captureUpdateBackdrop { pageSnapshot ->
+            appearanceCapturePending = false
+            if (isFinishing || isDestroyed || appearanceOverlay != null) {
+                pageSnapshot?.takeUnless(Bitmap::isRecycled)?.recycle()
+                return@captureUpdateBackdrop
+            }
+            val dialog = LiquidAppearanceDialogView(
+                context = this,
+                pageSnapshot = pageSnapshot,
+                initialMode = CampusThemeController.mode,
+                initialSystemDark = CampusThemeController.isSystemDark(this),
+                onApply = { mode ->
+                    hideAppearanceDialog {
+                        applyThemeMode(mode)
+                    }
+                },
+                onDismiss = { hideAppearanceDialog() }
+            )
+            pageHost.addView(dialog, matchParentParams())
+            appearanceOverlay = dialog
+            applyAppearanceDialogStatusBarScrim()
+            dialog.alpha = 0f
+            dialog.animate().alpha(1f).setDuration(180).start()
+        }
+    }
+
+    private fun hideAppearanceDialog(afterDismiss: (() -> Unit)? = null) {
+        val overlay = appearanceOverlay
+        if (overlay == null) {
+            afterDismiss?.invoke()
+            return
+        }
+        overlay.animate().alpha(0f).setDuration(130).withEndAction {
+            pageHost.removeView(overlay)
+            overlay.releaseSnapshot()
+            if (appearanceOverlay === overlay) appearanceOverlay = null
+            restorePageSystemBars()
+            afterDismiss?.invoke()
+        }.start()
+    }
+
+    private fun applyThemeMode(mode: CampusThemeMode) {
+        if (CampusThemeController.mode == mode) return
+        CampusThemeController.setMode(this, mode)
+        rebuildCurrentPageForTheme()
+    }
+
+    private fun rebuildCurrentPageForTheme() {
+        pageHost.setBackgroundColor(activeThemeColors.pageBackground)
+
+        if (onLoginPage) {
+            setSystemBars(activeThemeColors.pageBackground)
+            swapPage(buildLoginPage(), forward = false, animate = false)
+            return
+        }
+
+        setSystemBars(Color.TRANSPARENT)
+        window.navigationBarColor = activeThemeColors.gradient.last()
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (viewingPublicSchedule && publicScheduleCourses.isNotEmpty()) {
+            publicScheduleCourses = recolorCourses(
+                publicScheduleCourses,
+                term = publicScheduleTerm,
+                persistMapping = false
+            )
+        }
+        val themedPage = buildSchedulePage()
+        applyScheduleStatusBarAppearance()
+        swapPage(themedPage, forward = true, animate = false)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (CampusThemeController.mode == CampusThemeMode.SYSTEM) {
+            rebuildCurrentPageForTheme()
+        }
+    }
+
     private fun customBackgroundFile(): File = File(filesDir, CUSTOM_BACKGROUND_FILE_NAME)
     private fun customBackgroundSourceFile(): File = File(filesDir, CUSTOM_BACKGROUND_SOURCE_FILE_NAME)
     private fun customBackgroundPendingSourceFile(): File =
@@ -3417,7 +3543,11 @@ class MainActivity : ComponentActivity() {
             .getFloat(KEY_CUSTOM_BACKGROUND_CLARITY, DEFAULT_BACKGROUND_CLARITY)
             .coerceIn(MIN_BACKGROUND_CLARITY, 1f)
         val alpha = ((1f - clarity) * 255f).roundToInt()
-        return Color.argb(alpha, 238, 241, 248)
+        return if (activeThemeColors.isDark) {
+            Color.argb(alpha, 12, 12, 13)
+        } else {
+            Color.argb(alpha, 238, 241, 248)
+        }
     }
 
     private fun resolveScheduleTextPalette(
@@ -3428,22 +3558,25 @@ class MainActivity : ComponentActivity() {
     ): ScheduleTextPalette {
         if (background == null || background.isRecycled) {
             return ScheduleTextPalette(
-                primary = Color.rgb(28, 34, 48),
-                secondary = Color.rgb(102, 111, 133),
+                primary = activeThemeColors.primaryText,
+                secondary = activeThemeColors.secondaryText,
                 halo = Color.TRANSPARENT,
                 adaptive = false,
-                usesDarkForeground = true
+                usesDarkForeground = !activeThemeColors.isDark
             )
         }
 
-        val darkPrimary = Color.rgb(28, 34, 48)
-        val darkSecondary = Color.rgb(65, 72, 85)
-        val lightPrimary = Color.rgb(250, 250, 252)
-        val lightSecondary = Color.rgb(231, 234, 240)
+        val darkPrimary = Color.rgb(24, 25, 28)
+        val darkSecondary = Color.rgb(47, 49, 54)
+        val lightPrimary = Color.rgb(248, 248, 249)
+        val lightSecondary = Color.rgb(230, 230, 234)
         var darkContrastTotal = 0.0
         var lightContrastTotal = 0.0
         val columns = 24
         val rows = 36
+        val darkContrastSamples = DoubleArray(columns * rows)
+        val lightContrastSamples = DoubleArray(columns * rows)
+        var sampleIndex = 0
         val cropLeft = crop?.left?.coerceIn(0f, 1f) ?: 0f
         val cropTop = crop?.top?.coerceIn(0f, 1f) ?: 0f
         val cropRight = crop?.right?.coerceIn(cropLeft + 0.0001f, 1f) ?: 1f
@@ -3452,8 +3585,9 @@ class MainActivity : ComponentActivity() {
             val yRatio = cropTop + (row + 0.5f) / rows * (cropBottom - cropTop)
             val y = (yRatio * background.height)
                 .roundToInt().coerceIn(0, background.height - 1)
-            val gradientColor = GRADIENT_COLORS[
-                (row * GRADIENT_COLORS.size / rows).coerceIn(GRADIENT_COLORS.indices)
+            val gradientColors = activeThemeColors.gradient
+            val gradientColor = gradientColors[
+                (row * gradientColors.size / rows).coerceIn(gradientColors.indices)
             ]
             for (column in 0 until columns) {
                 val xRatio = cropLeft + (column + 0.5f) / columns * (cropRight - cropLeft)
@@ -3464,17 +3598,31 @@ class MainActivity : ComponentActivity() {
                     gradientColor
                 )
                 val finalColor = ColorUtils.compositeColors(scrimColor, wallpaperColor)
-                darkContrastTotal +=
+                val darkContrast =
                     ColorUtils.calculateContrast(darkPrimary, finalColor) * 0.62 +
-                    ColorUtils.calculateContrast(darkSecondary, finalColor) * 0.38
-                lightContrastTotal +=
+                        ColorUtils.calculateContrast(darkSecondary, finalColor) * 0.38
+                val lightContrast =
                     ColorUtils.calculateContrast(lightPrimary, finalColor) * 0.62 +
-                    ColorUtils.calculateContrast(lightSecondary, finalColor) * 0.38
+                        ColorUtils.calculateContrast(lightSecondary, finalColor) * 0.38
+                darkContrastSamples[sampleIndex] = darkContrast
+                lightContrastSamples[sampleIndex] = lightContrast
+                darkContrastTotal += darkContrast
+                lightContrastTotal += lightContrast
+                sampleIndex++
             }
         }
-        val contrastDelta = (darkContrastTotal - lightContrastTotal) /
-            (kotlin.math.abs(darkContrastTotal) + kotlin.math.abs(lightContrastTotal))
-                .coerceAtLeast(1.0)
+        darkContrastSamples.sort()
+        lightContrastSamples.sort()
+        val lowContrastIndex = ((sampleIndex - 1) * 0.20f).roundToInt().coerceAtLeast(0)
+        val darkAverage = darkContrastTotal / sampleIndex.coerceAtLeast(1)
+        val lightAverage = lightContrastTotal / sampleIndex.coerceAtLeast(1)
+        val darkScore = darkContrastSamples[lowContrastIndex] * 0.64 + darkAverage * 0.36
+        // 深色模式的自定义壁纸优先使用浅色前景；只有壁纸整体足够明亮、
+        // 深色文字的低分位对比度明显更好时才切回深色前景。
+        val lightScore = lightContrastSamples[lowContrastIndex] * 0.64 +
+            lightAverage * 0.36 + if (activeThemeColors.isDark) 0.32 else 0.0
+        val contrastDelta = (darkScore - lightScore) /
+            (kotlin.math.abs(darkScore) + kotlin.math.abs(lightScore)).coerceAtLeast(1.0)
         val useDarkForeground = when (previousUsesDarkForeground) {
             true -> contrastDelta >= -0.025
             false -> contrastDelta > 0.025
@@ -3484,7 +3632,7 @@ class MainActivity : ComponentActivity() {
             ScheduleTextPalette(
                 primary = darkPrimary,
                 secondary = darkSecondary,
-                halo = Color.argb(100, 255, 255, 255),
+                halo = Color.argb(184, 255, 255, 255),
                 adaptive = true,
                 usesDarkForeground = true
             )
@@ -3492,7 +3640,7 @@ class MainActivity : ComponentActivity() {
             ScheduleTextPalette(
                 primary = lightPrimary,
                 secondary = lightSecondary,
-                halo = Color.argb(96, 0, 0, 0),
+                halo = Color.argb(172, 0, 0, 0),
                 adaptive = true,
                 usesDarkForeground = false
             )
@@ -3533,27 +3681,8 @@ class MainActivity : ComponentActivity() {
     private fun applyScheduleTextPalette(palette: ScheduleTextPalette) {
         if (palette == scheduleTextPalette) return
         scheduleTextPalette = palette
-        scheduleDate?.apply {
-            setTextColor(palette.primary)
-            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
-            applyScheduleTextHalo()
-        }
-        scheduleWeek?.apply {
-            setTextColor(palette.primary)
-            setTypeface(
-                Typeface.DEFAULT,
-                if (palette.adaptive) Typeface.BOLD else Typeface.NORMAL
-            )
-            applyScheduleTextHalo()
-        }
-        scheduleVersion?.apply {
-            setTextColor(palette.secondary)
-            setTypeface(
-                Typeface.DEFAULT,
-                if (palette.adaptive) Typeface.BOLD else Typeface.NORMAL
-            )
-            applyScheduleTextHalo()
-        }
+        scheduleHeader?.updatePalette(palette)
+        scheduleVersion?.updatePalette(palette)
         scheduleGrid?.refreshTextPalette()
         applyScheduleStatusBarAppearance()
     }
@@ -3567,9 +3696,32 @@ class MainActivity : ComponentActivity() {
 
     private fun TextView.applyScheduleTextHalo() {
         if (scheduleTextPalette.adaptive) {
-            setShadowLayer(dp(0.72f).toFloat(), 0f, 0f, scheduleTextPalette.halo)
+            setShadowLayer(dp(1.05f).toFloat(), 0f, 0f, scheduleTextPalette.halo)
         } else {
             setShadowLayer(0f, 0f, 0f, Color.TRANSPARENT)
+        }
+    }
+
+    private fun refreshScheduleSystemBars() {
+        setSystemBars(Color.TRANSPARENT)
+        window.navigationBarColor = activeThemeColors.gradient.last()
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        schedulePageRoot?.let { page ->
+            page.post { ViewCompat.requestApplyInsets(page) }
+        }
+        applyScheduleStatusBarAppearance()
+    }
+
+    private fun applyAppearanceDialogStatusBarScrim() {
+        window.statusBarColor = Color.TRANSPARENT
+        applyScheduleStatusBarAppearance()
+    }
+
+    private fun restorePageSystemBars() {
+        if (onLoginPage) {
+            setSystemBars(activeThemeColors.pageBackground)
+        } else {
+            refreshScheduleSystemBars()
         }
     }
 
@@ -3581,7 +3733,11 @@ class MainActivity : ComponentActivity() {
             flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            flags = flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            flags = if (scheduleTextPalette.usesDarkForeground) {
+                flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            } else {
+                flags and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+            }
         }
         window.decorView.systemUiVisibility = flags
     }
@@ -3678,7 +3834,10 @@ class MainActivity : ComponentActivity() {
                             editor.setApplyToastState(WallpaperApplyToastState.SUCCESS)
                             editor.postDelayed({
                                 if (backgroundEditorOverlay === editor) {
-                                    hideBackgroundEditor(deletePendingSource = false) {
+                                    hideBackgroundEditor(
+                                        deletePendingSource = false,
+                                        preserveLivePreview = true
+                                    ) {
                                         showSchedulePage(animate = false)
                                     }
                                 }
@@ -3698,6 +3857,7 @@ class MainActivity : ComponentActivity() {
         backgroundEditorPendingSource = if (pendingSelection) sourceFile else null
         backgroundEditorOverlay = editor
         pageHost.addView(editor, matchParentParams())
+        refreshScheduleSystemBars()
     }
 
     private fun updateLiveBackgroundPreview(
@@ -3726,7 +3886,11 @@ class MainActivity : ComponentActivity() {
         }
         val scrimAlpha = ((1f - clarity.coerceIn(MIN_BACKGROUND_CLARITY, 1f)) * 255f)
             .roundToInt()
-        val previewScrim = Color.argb(scrimAlpha, 238, 241, 248)
+        val previewScrim = if (activeThemeColors.isDark) {
+            Color.argb(scrimAlpha, 12, 12, 13)
+        } else {
+            Color.argb(scrimAlpha, 238, 241, 248)
+        }
         scrimView.setBackgroundColor(previewScrim)
         liveScheduleBackgroundBitmap = sourceBitmap
         liveScheduleBackgroundCrop = crop
@@ -3763,6 +3927,7 @@ class MainActivity : ComponentActivity() {
     private fun hideBackgroundEditor(
         deletePendingSource: Boolean,
         restoreScheduleBackground: Boolean = false,
+        preserveLivePreview: Boolean = false,
         afterDismiss: (() -> Unit)? = null
     ) {
         val editor = backgroundEditorOverlay
@@ -3778,15 +3943,16 @@ class MainActivity : ComponentActivity() {
         editor.dismiss {
             if (restoreScheduleBackground) {
                 restoreScheduleBackgroundAfterEditor()
-            } else {
+            } else if (!preserveLivePreview) {
                 schedulePageBackgroundImage?.setImageDrawable(null)
             }
             clearLiveScheduleBackgroundPreview()
             backgroundEditorPreviewBitmap = null
             pageHost.removeView(editor)
-            editor.releaseBitmap()
             if (deletePendingSource) pendingSource?.delete()
+            refreshScheduleSystemBars()
             afterDismiss?.invoke()
+            editor.releaseBitmap()
         }
     }
 
@@ -4412,48 +4578,94 @@ class MainActivity : ComponentActivity() {
     private fun recolorCourses(
         courses: List<Course>,
         term: String = selectedTerm(),
-        persistMapping: Boolean = true
+        persistMapping: Boolean = true,
+        refreshMapping: Boolean = false
     ): List<Course> {
         val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        val stored = if (persistMapping) {
+        // 浅色与深色的最终显示色板不同，因此分别保存映射，避免切换主题时
+        // 一套主题为了满足自己的色差约束而破坏另一套主题已经稳定的配色。
+        val colorMapKey = if (activeThemeColors.isDark) KEY_DARK_COLOR_MAP else KEY_COLOR_MAP
+        val previousMapping = if (persistMapping) {
             runCatching {
-                JSONObject(preferences.getString(KEY_COLOR_MAP, "{}") ?: "{}")
+                JSONObject(preferences.getString(colorMapKey, "{}") ?: "{}")
             }.getOrDefault(JSONObject())
         } else {
             JSONObject()
         }
+        val stored = if (refreshMapping) JSONObject() else previousMapping
         val allNames = courses.map { it.name }.distinct().sorted()
         val actualWeek = weekForTerm(term).coerceAtLeast(1)
         val activeCourses = courses.filter { latestCourseWeek(it) >= actualWeek }
         val activeNames = activeCourses.map { it.name }.distinct()
         val activeNameSet = activeNames.toSet()
+        val visibleCourseCounts = activeCourses
+            .filter { courseVisibleInWeek(it, actualWeek) }
+            .groupingBy { it.name }
+            .eachCount()
         val relations = buildCourseColorRelations(activeCourses, actualWeek)
         val usedActiveIndices = mutableSetOf<Int>()
         val indexByName = mutableMapOf<String, Int>()
 
-        // 同周出现的所有课程都参与色差约束，空间邻近的课程获得额外权重。
+        // 深色模式优先给当前周可见、占用卡片较多的课程分配锚点色，避免未来周
+        // 的隐藏课程先占满色相空间，迫使当前页面上的不同课程落入同一色系。
         val allocationOrder = activeNames.sortedWith(
-            compareByDescending<String> { relations[it]?.values?.sum() ?: 0.0 }
+            compareByDescending<String> {
+                if (activeThemeColors.isDark) visibleCourseCounts[it] ?: 0 else 0
+            }
+                .thenByDescending { relations[it]?.values?.sum() ?: 0.0 }
                 .thenByDescending { relations[it]?.size ?: 0 }
                 .thenBy { it }
         )
         val preferredOnly = activeNames.size <= COURSE_COLORS.size
-        val candidateCount = if (preferredOnly) COURSE_COLORS.size else maxOf(COURSE_COLORS.size, activeNames.size + 8)
+        val candidateCount = when {
+            activeThemeColors.isDark -> maxOf(DARK_COURSE_CANDIDATE_COUNT, activeNames.size + 16)
+            preferredOnly -> COURSE_COLORS.size
+            else -> maxOf(COURSE_COLORS.size, activeNames.size + 8)
+        }
         allocationOrder.forEach { name ->
-            val storedIndex = stored.optInt(name, -1)
-            val candidateIndices = buildList {
+            val previousIndex = previousMapping.optInt(name, -1)
+            val storedIndex = if (refreshMapping) -1 else previousIndex
+            val availableCandidates = buildList {
                 addAll(0 until candidateCount)
                 if (storedIndex >= candidateCount) add(storedIndex)
             }.filterNot { it in usedActiveIndices }
+            val candidateIndices = if (
+                refreshMapping && previousIndex >= 0 && availableCandidates.size > 1
+            ) {
+                availableCandidates.filterNot { it == previousIndex }.ifEmpty { availableCandidates }
+            } else {
+                availableCandidates
+            }
+            // 连续色差不足以表达“同色系”：例如橄榄绿与深绿在数值上相隔
+            // 不小，人眼仍会把它们都归为绿色。深色模式先按人眼色系占位，
+            // 当前周不同课程只有在色系确实不足时才允许复用。
+            val familySeparatedCandidates = if (activeThemeColors.isDark) {
+                candidateIndices.filter { candidate ->
+                    !hasCurrentWeekColorFamilyCollision(
+                        name = name,
+                        candidateIndex = candidate,
+                        assignedIndices = indexByName,
+                        relations = relations
+                    )
+                }
+            } else {
+                candidateIndices
+            }
+            val preferredCandidates = familySeparatedCandidates.ifEmpty { candidateIndices }
             // 先硬性排除同一页面上过于接近的颜色，再用综合评分选择最优项。
             // 课程很多、色板空间不足时逐级放宽阈值，避免所有候选都被淘汰。
-            val eligibleCandidates = listOf(
-                MIN_SAME_PAGE_COLOR_DISTANCE,
-                MIN_SAME_PAGE_COLOR_DISTANCE - 4.0,
-                MIN_SAME_PAGE_COLOR_DISTANCE - 8.0,
-                0.0
-            ).firstNotNullOfOrNull { threshold ->
-                candidateIndices.filter { candidate ->
+            val distanceThresholds = if (activeThemeColors.isDark) {
+                listOf(9.0, 7.0, 6.0, 0.0)
+            } else {
+                listOf(
+                    MIN_SAME_PAGE_COLOR_DISTANCE,
+                    MIN_SAME_PAGE_COLOR_DISTANCE - 4.0,
+                    MIN_SAME_PAGE_COLOR_DISTANCE - 8.0,
+                    0.0
+                )
+            }
+            val eligibleCandidates = distanceThresholds.firstNotNullOfOrNull { threshold ->
+                preferredCandidates.filter { candidate ->
                     minimumRelatedColorDistance(
                         name = name,
                         candidateIndex = candidate,
@@ -4461,7 +4673,7 @@ class MainActivity : ComponentActivity() {
                         relations = relations
                     ) >= threshold
                 }.takeIf { it.isNotEmpty() }
-            } ?: candidateIndices
+            } ?: preferredCandidates
             val chosen = eligibleCandidates.maxByOrNull { candidate ->
                 courseColorAssignmentScore(
                     name = name,
@@ -4478,16 +4690,59 @@ class MainActivity : ComponentActivity() {
 
         // 已结束课程不再占用颜色名额，但保留自己的历史映射；因此它们可以与当前课程复用颜色。
         allNames.filterNot { it in activeNameSet }.forEach { name ->
-            val historical = stored.optInt(name, -1).takeIf { it >= 0 } ?: 0
+            val previousIndex = previousMapping.optInt(name, -1)
+            val historical = if (refreshMapping && previousIndex >= 0) {
+                (previousIndex + 1).mod(candidateCount)
+            } else {
+                stored.optInt(name, -1).takeIf { it >= 0 } ?: 0
+            }
             indexByName[name] = historical
             stored.put(name, historical)
         }
         val activeMap = JSONObject()
         allNames.forEach { name -> activeMap.put(name, indexByName[name] ?: 0) }
         if (persistMapping) {
-            preferences.edit().putString(KEY_COLOR_MAP, activeMap.toString()).apply()
+            preferences.edit()
+                .putString(colorMapKey, activeMap.toString())
+                .apply()
         }
         return courses.map { it.copy(background = courseColorAt(indexByName[it.name] ?: 0)) }
+    }
+
+    private fun hasCurrentWeekColorFamilyCollision(
+        name: String,
+        candidateIndex: Int,
+        assignedIndices: Map<String, Int>,
+        relations: Map<String, Map<String, Double>>
+    ): Boolean {
+        val candidateFamily = darkCourseColorFamily(courseColorAt(candidateIndex))
+        val courseRelations = relations[name].orEmpty()
+        return assignedIndices.any { (otherName, otherIndex) ->
+            val relationWeight = courseRelations[otherName] ?: return@any false
+            relationWeight >= CURRENT_WEEK_COURSE_COLOR_WEIGHT &&
+                darkCourseColorFamily(courseColorAt(otherIndex)) == candidateFamily
+        }
+    }
+
+    /**
+     * 深色课程使用 8 个人眼色系。绿色范围刻意加宽，避免橄榄绿、草绿和深绿
+     * 虽然色相数值不同，却在同一页面上仍被感知为两种近似绿色。
+     */
+    private fun darkCourseColorFamily(color: Int): Int {
+        val lab = colorToOklab(color)
+        val hue = Math.toDegrees(kotlin.math.atan2(lab[2], lab[1])).let {
+            if (it < 0.0) it + 360.0 else it
+        }
+        return when {
+            hue < 25.0 || hue >= 345.0 -> 0 // 红
+            hue < 65.0 -> 1                 // 橙
+            hue < 90.0 -> 2                 // 黄 / 琥珀
+            hue < 170.0 -> 3                // 绿（包含橄榄绿）
+            hue < 210.0 -> 4                // 青
+            hue < 255.0 -> 5                // 蓝
+            hue < 300.0 -> 6                // 紫
+            else -> 7                       // 品红 / 粉
+        }
     }
 
     private fun minimumRelatedColorDistance(
@@ -4499,7 +4754,12 @@ class MainActivity : ComponentActivity() {
         val courseRelations = relations[name].orEmpty()
         return assignedIndices.asSequence()
             .mapNotNull { (otherName, otherIndex) ->
-                if (courseRelations.containsKey(otherName)) {
+                val relationWeight = courseRelations[otherName] ?: return@mapNotNull null
+                // 深色硬约束只针对当前周真正同时可见的课程。若把未来所有课程
+                // 一起塞进硬约束，课程较多时阈值必然降到 0，反而放过当前页撞色。
+                val requiresHardSeparation = !activeThemeColors.isDark ||
+                    relationWeight >= CURRENT_WEEK_COURSE_COLOR_WEIGHT
+                if (requiresHardSeparation) {
                     colorDistance(courseColorAt(candidateIndex), courseColorAt(otherIndex))
                 } else {
                     null
@@ -4518,6 +4778,7 @@ class MainActivity : ComponentActivity() {
         val candidateColor = courseColorAt(candidateIndex)
         var globalMinimum = Double.POSITIVE_INFINITY
         var sameWeekMinimum = Double.POSITIVE_INFINITY
+        var currentWeekMinimum = Double.POSITIVE_INFINITY
         var nearbyMinimum = Double.POSITIVE_INFINITY
         var weightedDistance = 0.0
         var relationWeightTotal = 0.0
@@ -4528,15 +4789,25 @@ class MainActivity : ComponentActivity() {
             globalMinimum = minOf(globalMinimum, distance)
             val relationWeight = courseRelations[otherName] ?: return@forEach
             sameWeekMinimum = minOf(sameWeekMinimum, distance)
+            if (relationWeight >= CURRENT_WEEK_COURSE_COLOR_WEIGHT) {
+                currentWeekMinimum = minOf(currentWeekMinimum, distance)
+            }
             weightedDistance += distance * relationWeight
             relationWeightTotal += relationWeight
-            if (relationWeight >= NEARBY_COURSE_COLOR_WEIGHT) {
+            val spatiallyNearby = relationWeight == NEARBY_COURSE_COLOR_WEIGHT ||
+                relationWeight >= CURRENT_WEEK_NEARBY_COURSE_COLOR_WEIGHT
+            if (spatiallyNearby) {
                 nearbyMinimum = minOf(nearbyMinimum, distance)
             }
         }
 
         val fallbackDistance = globalMinimum.takeIf(Double::isFinite) ?: 100.0
-        val pageDistance = sameWeekMinimum.takeIf(Double::isFinite) ?: fallbackDistance
+        val termDistance = sameWeekMinimum.takeIf(Double::isFinite) ?: fallbackDistance
+        val pageDistance = if (activeThemeColors.isDark) {
+            currentWeekMinimum.takeIf(Double::isFinite) ?: termDistance
+        } else {
+            termDistance
+        }
         val nearDistance = nearbyMinimum.takeIf(Double::isFinite) ?: pageDistance
         val pageAverage = if (relationWeightTotal > 0.0) {
             weightedDistance / relationWeightTotal
@@ -4546,8 +4817,8 @@ class MainActivity : ComponentActivity() {
         val stabilityBonus = if (candidateIndex == storedIndex) 4.0 else 0.0
         val generatedPenalty = if (candidateIndex >= COURSE_COLORS.size) 6.0 else 0.0
 
-        // 最小同周色差是首要目标；邻近色差和平均色差负责打破相近方案，
-        // 历史颜色仅作为轻量偏好，不能再压过整页辨识度。
+        // 深色模式以当前周真实可见色差为首要目标；未来周关系用于平均分打破
+        // 相近方案。历史颜色仅作为轻量偏好，不能压过当前页面辨识度。
         return pageDistance * 5.0 +
             nearDistance * 1.8 +
             pageAverage * 0.7 +
@@ -4581,10 +4852,14 @@ class MainActivity : ComponentActivity() {
                     courseVisibleInWeek(first, week) && courseVisibleInWeek(second, week)
                 }
                 if (!coexist) continue
-                val weight = if (courseBlocksAreNear(first, second)) {
-                    NEARBY_COURSE_COLOR_WEIGHT
-                } else {
-                    SAME_WEEK_COURSE_COLOR_WEIGHT
+                val visibleThisWeek = courseVisibleInWeek(first, fromWeek) &&
+                    courseVisibleInWeek(second, fromWeek)
+                val nearby = courseBlocksAreNear(first, second)
+                val weight = when {
+                    visibleThisWeek && nearby -> CURRENT_WEEK_NEARBY_COURSE_COLOR_WEIGHT
+                    visibleThisWeek -> CURRENT_WEEK_COURSE_COLOR_WEIGHT
+                    nearby -> NEARBY_COURSE_COLOR_WEIGHT
+                    else -> SAME_WEEK_COURSE_COLOR_WEIGHT
                 }
                 graph[first.name]?.merge(second.name, weight, ::maxOf)
                 graph[second.name]?.merge(first.name, weight, ::maxOf)
@@ -4607,10 +4882,30 @@ class MainActivity : ComponentActivity() {
         return if (dayGap == 0) slotGap <= 1 else slotGap == 0
     }
 
-    /** OKLab 欧氏距离，能更准确地区分当前低饱和色板中的近似蓝、粉、紫色。 */
+    /** OKLab 欧氏距离；深色模式直接比较最终显示的前景色。 */
     private fun colorDistance(first: Int, second: Int): Double {
-        val firstLab = colorToOklab(first)
-        val secondLab = colorToOklab(second)
+        val firstCompared = if (activeThemeColors.isDark) {
+            darkCourseTone(
+                first,
+                lightness = DARK_COURSE_FOREGROUND_LIGHTNESS,
+                chroma = DARK_COURSE_FOREGROUND_CHROMA,
+                alpha = 255
+            )
+        } else {
+            first
+        }
+        val secondCompared = if (activeThemeColors.isDark) {
+            darkCourseTone(
+                second,
+                lightness = DARK_COURSE_FOREGROUND_LIGHTNESS,
+                chroma = DARK_COURSE_FOREGROUND_CHROMA,
+                alpha = 255
+            )
+        } else {
+            second
+        }
+        val firstLab = colorToOklab(firstCompared)
+        val secondLab = colorToOklab(secondCompared)
         val lightness = firstLab[0] - secondLab[0]
         val greenRed = firstLab[1] - secondLab[1]
         val blueYellow = firstLab[2] - secondLab[2]
@@ -4648,6 +4943,74 @@ class MainActivity : ComponentActivity() {
     private fun courseColorAt(index: Int): Int {
         if (index < COURSE_COLORS.size) return COURSE_COLORS[index]
         return Color.HSVToColor(floatArrayOf((index * 137.508f) % 360f, 0.48f, 0.90f))
+    }
+
+    /**
+     * 深色课程色保留浅色色板的基础色相，仅统一 OKLab 明度与彩度。
+     * 深色模式拥有独立映射，并按照这里生成的最终颜色计算色差，因此不再需要
+     * 按色板索引二次洗牌色相，也不会让同一课程在两种主题下变成完全无关的颜色。
+     */
+    private fun darkCourseTone(color: Int, lightness: Double, chroma: Double, alpha: Int): Int {
+        val sourceLab = colorToOklab(color)
+        val hue = kotlin.math.atan2(sourceLab[2], sourceLab[1])
+        return oklabToColor(
+            lightness = lightness,
+            greenRed = kotlin.math.cos(hue) * chroma,
+            blueYellow = kotlin.math.sin(hue) * chroma,
+            alpha = alpha
+        )
+    }
+
+    private fun oklabToColor(
+        lightness: Double,
+        greenRed: Double,
+        blueYellow: Double,
+        alpha: Int
+    ): Int {
+        val lRoot = lightness + 0.3963377774 * greenRed + 0.2158037573 * blueYellow
+        val mRoot = lightness - 0.1055613458 * greenRed - 0.0638541728 * blueYellow
+        val sRoot = lightness - 0.0894841775 * greenRed - 1.2914855480 * blueYellow
+        val l = lRoot * lRoot * lRoot
+        val m = mRoot * mRoot * mRoot
+        val s = sRoot * sRoot * sRoot
+
+        fun gamma(channel: Double): Int {
+            val encoded = if (channel <= 0.0031308) {
+                12.92 * channel
+            } else {
+                1.055 * Math.pow(channel.coerceAtLeast(0.0), 1.0 / 2.4) - 0.055
+            }
+            return (encoded.coerceIn(0.0, 1.0) * 255.0).roundToInt()
+        }
+
+        return Color.argb(
+            alpha.coerceIn(0, 255),
+            gamma(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+            gamma(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+            gamma(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s)
+        )
+    }
+
+    /** 所有深色卡片使用相同感知明度，避免蓝、红、黄看起来深浅不一。 */
+    private fun displayedCourseColor(color: Int): Int {
+        if (!activeThemeColors.isDark) return color
+        return darkCourseTone(
+            color,
+            lightness = DARK_COURSE_BACKGROUND_LIGHTNESS,
+            chroma = DARK_COURSE_BACKGROUND_CHROMA,
+            alpha = 232
+        )
+    }
+
+    /** 前景与卡片共享色相，以柔和的浅彩色保持辨识度，避免高彩度霓虹感。 */
+    private fun displayedCourseForeground(color: Int, fallback: Int): Int {
+        if (!activeThemeColors.isDark) return fallback
+        return darkCourseTone(
+            color,
+            lightness = DARK_COURSE_FOREGROUND_LIGHTNESS,
+            chroma = DARK_COURSE_FOREGROUND_CHROMA,
+            alpha = 255
+        )
     }
 
     private fun shareWeekPng() {
@@ -4783,7 +5146,7 @@ class MainActivity : ComponentActivity() {
         if (actualWeek == currentWeek) return
         val direction = if (actualWeek > currentWeek) -1 else 1
         currentWeek = actualWeek
-        scheduleWeek?.text = formatWeekLabel(currentWeek)
+        scheduleHeader?.updateWeek(formatWeekLabel(currentWeek))
         val grid = scheduleGrid ?: return
         val distance = dp(72f).toFloat() * direction
         grid.animate().translationX(distance).alpha(0f).setDuration(140).withEndAction {
@@ -5881,9 +6244,9 @@ class MainActivity : ComponentActivity() {
         boxStrokeWidth = dp(1)
         boxStrokeWidthFocused = dp(2)
         setBoxStrokeColorStateList(inputStrokeColors())
-        defaultHintTextColor = ColorStateList.valueOf(TEXT_SECONDARY)
-        hintTextColor = ColorStateList.valueOf(PRIMARY)
-        setErrorTextColor(ColorStateList.valueOf(ERROR))
+        defaultHintTextColor = ColorStateList.valueOf(activeThemeColors.secondaryText)
+        hintTextColor = ColorStateList.valueOf(activeThemeColors.primary)
+        setErrorTextColor(ColorStateList.valueOf(activeThemeColors.error))
     }
 
     private fun selectorInputBox(hint: String) = inputBox(hint).apply {
@@ -5897,7 +6260,7 @@ class MainActivity : ComponentActivity() {
     private fun selectorFieldBackground(enabled: Boolean): LayerDrawable {
         val layers = LayerDrawable(arrayOf(
             ColorDrawable(Color.TRANSPARENT),
-            ColorDrawable(if (enabled) OUTLINE else Color.rgb(232, 234, 240))
+            ColorDrawable(if (enabled) activeThemeColors.outline else activeThemeColors.disabledOutline)
         ))
         layers.setLayerGravity(1, Gravity.BOTTOM)
         layers.setLayerWidth(1, -1)
@@ -5906,18 +6269,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun input(inputType: Int) = TextInputEditText(this).apply {
-        setSingleLine(true); textSize = 16f; setTextColor(TEXT_PRIMARY); setHintTextColor(TEXT_SECONDARY)
+        setSingleLine(true); textSize = 16f; setTextColor(activeThemeColors.primaryText); setHintTextColor(activeThemeColors.secondaryText)
         this.inputType = inputType; minHeight = dp(58); setPadding(dp(16), 0, dp(16), 0)
     }
 
     private fun inputStrokeColors() = ColorStateList(
         arrayOf(intArrayOf(android.R.attr.state_focused), intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
-        intArrayOf(PRIMARY, Color.rgb(232, 234, 240), OUTLINE)
+        intArrayOf(activeThemeColors.primary, activeThemeColors.disabledOutline, activeThemeColors.outline)
     )
 
     private fun surfaceCard(radius: Float) = MaterialCardView(this).apply {
-        this.radius = radius; cardElevation = dp(2).toFloat(); setCardBackgroundColor(SURFACE)
-        setStrokeColor(OUTLINE); strokeWidth = dp(1)
+        this.radius = radius
+        cardElevation = if (activeThemeColors.isDark) 0f else dp(2).toFloat()
+        setCardBackgroundColor(activeThemeColors.surface)
+        if (activeThemeColors.isDark) {
+            strokeWidth = 0
+        } else {
+            setStrokeColor(activeThemeColors.outline)
+            strokeWidth = dp(1)
+        }
     }
 
     private fun text(value: String, size: Float, color: Int, style: Int) = TextView(this).apply {
@@ -5965,6 +6335,14 @@ class MainActivity : ComponentActivity() {
         }
         if (publicOptionOverlay != null) {
             hidePublicOptionPicker()
+            return
+        }
+        if (appearanceOverlay != null) {
+            hideAppearanceDialog()
+            return
+        }
+        if (refreshScheduleConfirmOverlay != null) {
+            hideRefreshScheduleConfirmation()
             return
         }
         if (scoreDetailOverlay != null) {
@@ -6036,14 +6414,15 @@ class MainActivity : ComponentActivity() {
         override fun getOpacity(): Int = android.graphics.PixelFormat.OPAQUE
 
         private fun sampleSmoothGradient(position: Float): Int {
-            val lastSegment = GRADIENT_COLORS.size - 2
-            val scaled = position.coerceIn(0f, 1f) * (GRADIENT_COLORS.size - 1)
+            val gradientColors = activeThemeColors.gradient
+            val lastSegment = gradientColors.size - 2
+            val scaled = position.coerceIn(0f, 1f) * (gradientColors.size - 1)
             val segment = scaled.toInt().coerceIn(0, lastSegment)
             val t = (scaled - segment).coerceIn(0f, 1f)
-            val p0 = GRADIENT_COLORS[(segment - 1).coerceAtLeast(0)]
-            val p1 = GRADIENT_COLORS[segment]
-            val p2 = GRADIENT_COLORS[segment + 1]
-            val p3 = GRADIENT_COLORS[(segment + 2).coerceAtMost(GRADIENT_COLORS.lastIndex)]
+            val p0 = gradientColors[(segment - 1).coerceAtLeast(0)]
+            val p1 = gradientColors[segment]
+            val p2 = gradientColors[segment + 1]
+            val p3 = gradientColors[(segment + 2).coerceAtMost(gradientColors.lastIndex)]
             fun channel(shift: Int): Int {
                 val a = (p0 shr shift) and 0xff
                 val b = (p1 shr shift) and 0xff
@@ -7124,15 +7503,26 @@ class MainActivity : ComponentActivity() {
             canvas.scale(drawScale, drawScale, centerX, centerY)
             paint.shader = null
             paint.style = Paint.Style.FILL
-            paint.color = Color.argb((126 * safeAlpha).toInt(), 226, 242, 255)
+            paint.color = if (activeThemeColors.isDark) {
+                Color.argb((190 * safeAlpha).toInt(), 31, 31, 34)
+            } else {
+                Color.argb((126 * safeAlpha).toInt(), 226, 242, 255)
+            }
             canvas.drawRoundRect(rect, corner, corner, paint)
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = dp(1.6f).toFloat()
-            paint.color = Color.argb((205 * safeAlpha).toInt(), 104, 177, 232)
+            paint.strokeWidth = dp(if (activeThemeColors.isDark) 1f else 1.6f).toFloat()
+            paint.color = if (activeThemeColors.isDark) {
+                Color.argb((70 * safeAlpha).toInt(), 158, 160, 168)
+            } else {
+                Color.argb((205 * safeAlpha).toInt(), 104, 177, 232)
+            }
             canvas.drawRoundRect(rect, corner, corner, paint)
             val radius = minOf(dp(12f).toFloat(), (rect.height() - dp(12f)) / 2f)
             paint.strokeWidth = dp(2.4f).toFloat()
             paint.strokeCap = Paint.Cap.ROUND
+            if (activeThemeColors.isDark) {
+                paint.color = Color.argb((166 * safeAlpha).toInt(), 166, 168, 176)
+            }
             canvas.drawLine(centerX - radius, centerY, centerX + radius, centerY, paint)
             canvas.drawLine(centerX, centerY - radius, centerX, centerY + radius, paint)
             paint.strokeCap = Paint.Cap.BUTT
@@ -7357,7 +7747,7 @@ class MainActivity : ComponentActivity() {
                             clearAddCourseSelection(invalidateView = false)
                             weekIndex = (weekIndex + delta).coerceIn(0, 20)
                             currentWeek = weekIndex
-                            scheduleWeek?.text = formatWeekLabel(currentWeek)
+                            scheduleHeader?.updateWeek(formatWeekLabel(currentWeek))
                             performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                         }
                         dragOffset = 0f
@@ -7587,9 +7977,20 @@ class MainActivity : ComponentActivity() {
             val right = left + courseWidth
             val bottom = headerHeight + (course.startSlot + course.slotCount) * slotHeight - dp(2f)
             rect.set(left.toFloat(), top.toFloat(), right.toFloat(), bottom.toFloat())
-            paint.style = Paint.Style.FILL; paint.color = course.background
+            paint.style = Paint.Style.FILL
+            paint.color = displayedCourseColor(course.background)
             val corner = minOf(dp(9f).toFloat(), dayColumnWidth * .12f); canvas.drawRoundRect(rect, corner, corner, paint)
-            paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(2f).toFloat(); paint.color = Color.argb(175, 255, 255, 255); canvas.drawRoundRect(rect, corner, corner, paint)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = dp(if (activeThemeColors.isDark) 1f else 2f).toFloat()
+            paint.color = if (activeThemeColors.isDark) {
+                ColorUtils.setAlphaComponent(
+                    displayedCourseForeground(course.background, course.foreground),
+                    62
+                )
+            } else {
+                Color.argb(175, 255, 255, 255)
+            }
+            canvas.drawRoundRect(rect, corner, corner, paint)
             val padding = maxOf(dp(3f).toFloat(), minOf(dp(7f).toFloat(), dayColumnWidth * .075f))
             // 使用卡片的真实内部宽度。列宽还包含左右各 3dp 的卡片外边距，
             // 若直接使用 dayColumnWidth，W/M 等宽字形会被误判为能够放下并越界。
@@ -7603,7 +8004,7 @@ class MainActivity : ComponentActivity() {
             }
             paint.style = Paint.Style.FILL
             paint.textSize = size
-            paint.color = course.foreground
+            paint.color = displayedCourseForeground(course.background, course.foreground)
             paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             var baseline = top + padding - paint.ascent()
             val lineHeight = size * 1.16f
@@ -7743,8 +8144,9 @@ class MainActivity : ComponentActivity() {
             for (row in 0 until 3) {
                 val pageY = (pageCenterY - halfHeight + halfHeight * row)
                     .coerceIn(0f, pageHeight - 1f)
-                val gradientIndex = ((pageY / pageHeight) * (GRADIENT_COLORS.size - 1))
-                    .roundToInt().coerceIn(GRADIENT_COLORS.indices)
+                val gradientColors = activeThemeColors.gradient
+                val gradientIndex = ((pageY / pageHeight) * (gradientColors.size - 1))
+                    .roundToInt().coerceIn(gradientColors.indices)
                 for (column in 0 until 7) {
                     val pageX = (pageCenterX - halfWidth + halfWidth * column / 3f)
                         .coerceIn(0f, pageWidth - 1f)
@@ -7754,7 +8156,7 @@ class MainActivity : ComponentActivity() {
                         .roundToInt().coerceIn(0, bitmap.height - 1)
                     val wallpaperColor = ColorUtils.compositeColors(
                         bitmap.getPixel(sourceX, sourceY),
-                        GRADIENT_COLORS[gradientIndex]
+                        gradientColors[gradientIndex]
                     )
                     val finalColor = ColorUtils.compositeColors(
                         backgroundSampleScrimColor,
@@ -7774,7 +8176,7 @@ class MainActivity : ComponentActivity() {
             }
             return ColorUtils.setAlphaComponent(
                 scheduleTextPalette.halo,
-                (baseAlpha * alphaScale).roundToInt().coerceIn(48, 132)
+                (baseAlpha * alphaScale).roundToInt().coerceIn(72, 196)
             )
         }
 
@@ -8025,11 +8427,36 @@ class MainActivity : ComponentActivity() {
     private fun hideCourseDetails() {
         val overlay = detailOverlay ?: return
         detailOverlay = null
+        // Keep the timetable at a fixed size while the IME is leaving. Restoring
+        // ADJUST_RESIZE before that animation finishes makes both the wallpaper and
+        // course grid measure once with the keyboard and once without it, producing
+        // a visible one-frame jump after saving a course.
+        hideKeyboard()
         overlay.animate().alpha(0f).setDuration(140).withEndAction {
             pageHost.removeView(overlay)
             overlay.releaseSnapshot()
-            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            restoreCourseDialogSoftInputModeWhenImeHidden()
         }.start()
+    }
+
+    private fun restoreCourseDialogSoftInputModeWhenImeHidden(attempt: Int = 0) {
+        val decor = window.decorView
+        val insets = ViewCompat.getRootWindowInsets(decor)
+        val imeVisible = insets?.let {
+            it.isVisible(WindowInsetsCompat.Type.ime()) ||
+                it.getInsets(WindowInsetsCompat.Type.ime()).bottom >
+                it.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+        } == true
+        val minimumSettleFrames = 8
+        val maximumWaitFrames = 32
+        if (attempt < maximumWaitFrames && (attempt < minimumSettleFrames || imeVisible)) {
+            decor.postDelayed(
+                { restoreCourseDialogSoftInputModeWhenImeHidden(attempt + 1) },
+                16L
+            )
+            return
+        }
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
     }
 
     override fun onResume() {
@@ -8071,6 +8498,10 @@ class MainActivity : ComponentActivity() {
         emptyRoomFilterOverlay = null
         publicOptionOverlay?.releaseSnapshot()
         publicOptionOverlay = null
+        appearanceOverlay?.releaseSnapshot()
+        appearanceOverlay = null
+        refreshScheduleConfirmOverlay?.releaseSnapshot()
+        refreshScheduleConfirmOverlay = null
         (shareOverlay as? LiquidPickerDialogView)?.releaseSnapshot()
         actionMenuOverlay?.releaseSnapshot()
         backgroundEditorOverlay?.releaseBitmap()
@@ -8118,6 +8549,7 @@ class MainActivity : ComponentActivity() {
         private const val KEY_EXAMS = "exams_cache"
         private const val KEY_EXAMS_PREFIX = "exams_cache_account"
         private const val KEY_COLOR_MAP = "course_color_map"
+        private const val KEY_DARK_COLOR_MAP = "dark_course_color_map"
         private const val KEY_PUSH_ENABLED = "push_enabled"
         private const val KEY_BATTERY_PROMPTED = "battery_prompted"
         private const val KEY_UPDATE_STARTED_CODE = "update_started_code"
@@ -8140,7 +8572,14 @@ class MainActivity : ComponentActivity() {
         private const val OFFICIAL_TERM_START_DAY = 7
         private const val SAME_WEEK_COURSE_COLOR_WEIGHT = 1.0
         private const val NEARBY_COURSE_COLOR_WEIGHT = 3.0
+        private const val CURRENT_WEEK_COURSE_COLOR_WEIGHT = 6.0
+        private const val CURRENT_WEEK_NEARBY_COURSE_COLOR_WEIGHT = 8.0
         private const val MIN_SAME_PAGE_COLOR_DISTANCE = 18.0
+        private const val DARK_COURSE_CANDIDATE_COUNT = 64
+        private const val DARK_COURSE_BACKGROUND_LIGHTNESS = 0.31
+        private const val DARK_COURSE_BACKGROUND_CHROMA = 0.05
+        private const val DARK_COURSE_FOREGROUND_LIGHTNESS = 0.78
+        private const val DARK_COURSE_FOREGROUND_CHROMA = 0.095
         private val COURSE_COLORS = intArrayOf(
             Color.rgb(130, 173, 247), Color.rgb(237, 184, 119), Color.rgb(120, 225, 208),
             Color.rgb(104, 154, 205), Color.rgb(232, 138, 117), Color.rgb(231, 121, 151),
@@ -8153,33 +8592,7 @@ class MainActivity : ComponentActivity() {
             Color.rgb(202, 141, 167), Color.rgb(137, 161, 207), Color.rgb(213, 181, 117),
             Color.rgb(132, 193, 184), Color.rgb(185, 153, 210)
         )
-        private val PAGE_BACKGROUND = Color.rgb(244, 246, 252)
-        private val PUBLIC_PAGE_BACKGROUND = Color.rgb(241, 243, 249)
-        private val PUBLIC_SURFACE = Color.rgb(247, 248, 252)
-        private val PUBLIC_CARD_OUTLINE = Color.rgb(220, 223, 232)
-        private val PUBLIC_FIELD_DIVIDER = Color.rgb(194, 196, 204)
-        private val PUBLIC_TOGGLE_BACKGROUND = Color.rgb(239, 241, 243)
-        private val PUBLIC_TOGGLE_OUTLINE = Color.rgb(143, 199, 246)
-        private val SCHEDULE_BACKGROUND = Color.rgb(238, 242, 250)
         private const val DEFAULT_BACKGROUND_CLARITY = 0.64f
         private const val MIN_BACKGROUND_CLARITY = 0.40f
-        private val GRADIENT_COLORS = intArrayOf(
-            Color.rgb(243, 242, 249), // #F3F2F9
-            Color.rgb(240, 241, 249), // #F0F1F9
-            Color.rgb(235, 239, 248), // #EBEFF8
-            Color.rgb(227, 235, 247), // #E3EBF7
-            Color.rgb(217, 229, 244)  // #D9E5F4
-        )
-        private val GRADIENT_START = GRADIENT_COLORS.first()
-        private val GRADIENT_END = GRADIENT_COLORS.last()
-        private const val SURFACE = Color.WHITE
-        private val TEXT_PRIMARY = Color.rgb(28, 34, 48)
-        private val TEXT_SECONDARY = Color.rgb(102, 111, 133)
-        private val THEME_BLUE = Color.rgb(0, 136, 255)
-        private val PRIMARY = Color.rgb(76, 92, 196)
-        private val PRIMARY_DARK = Color.rgb(50, 64, 153)
-        private val PRIMARY_CONTAINER = Color.rgb(232, 235, 255)
-        private val OUTLINE = Color.rgb(220, 225, 237)
-        private val ERROR = Color.rgb(187, 48, 56)
     }
 }

@@ -162,11 +162,12 @@ private fun LiquidScoreDetailDialog(
     totalScoreColor: Int,
     onDismiss: () -> Unit
 ) {
-    val contentColor = Color(0xFF171923)
+    val themeColors = CampusComposeTheme.colors
+    val contentColor = themeColors.primaryText
     val secondaryColor = contentColor.copy(alpha = 0.66f)
-    val accentColor = Color(0xFF0088FF)
-    val containerColor = Color(0xFFEEF1F8).copy(alpha = 0.28f)
-    val dimColor = Color(0xFF29293A).copy(alpha = 0.23f)
+    val accentColor = themeColors.accent
+    val containerColor = themeColors.glassSurface
+    val dimColor = themeColors.dialogScrim
     val snapshotImage = remember(pageSnapshot) { pageSnapshot?.asImageBitmap() }
     val backdrop = rememberLayerBackdrop()
     val title = courseName.ifBlank { "课程成绩" }
@@ -186,7 +187,7 @@ private fun LiquidScoreDetailDialog(
                     contentScale = ContentScale.FillBounds
                 )
             } else {
-                Box(Modifier.fillMaxSize().background(Color(0xFFE9EFF8)))
+                Box(Modifier.fillMaxSize().background(themeColors.pageBackground))
             }
             Box(Modifier.fillMaxSize().background(dimColor))
         }
@@ -209,12 +210,17 @@ private fun LiquidScoreDetailDialog(
                     backdrop = backdrop,
                     shape = { RoundedRectangle(20.dp) },
                     effects = {
-                        colorControls(brightness = 0.15f, saturation = 0.72f)
-                        blur(9.dp.toPx())
+                        colorControls(
+                            brightness = if (themeColors.isDark) 0f else 0.15f,
+                            saturation = if (themeColors.isDark) 0.54f else 0.72f
+                        )
+                        blur((if (themeColors.isDark) 8.dp else 9.dp).toPx())
                         lens(16.dp.toPx(), 32.dp.toPx())
                     },
                     shadow = null,
-                    highlight = { Highlight.Default.copy(alpha = 0.50f) },
+                    highlight = {
+                        Highlight.Default.copy(alpha = if (themeColors.isDark) 0.10f else 0.50f)
+                    },
                     onDrawSurface = { drawRect(containerColor) }
                 )
                 .clickable(
@@ -336,7 +342,7 @@ private fun ScoreDetailDialogContent(
                 .fillMaxWidth()
                 .border(
                     width = 1.dp,
-                    color = Color.White.copy(alpha = 0.58f),
+                    color = CampusComposeTheme.colors.glassOutline,
                     shape = RoundedCornerShape(20.dp)
                 )
                 .padding(start = 10.dp, top = 9.dp, end = 18.dp, bottom = 9.dp),
@@ -413,7 +419,7 @@ private fun ScoreDetailMetric(
         modifier
             .border(
                 width = 1.dp,
-                color = Color.White.copy(alpha = 0.58f),
+                color = CampusComposeTheme.colors.glassOutline,
                 shape = RoundedCornerShape(20.dp)
             )
             .padding(start = 16.dp, top = 9.dp, end = 8.dp, bottom = 9.dp)

@@ -14,6 +14,7 @@ import androidx.compose.foundation.MutatorMutex
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -64,7 +65,6 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -150,7 +150,8 @@ internal class CampusLiquidBottomTabsView(
         val composeView = ComposeView(context).apply {
             setBackgroundColor(android.graphics.Color.TRANSPARENT)
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-            setContent {
+            setCampusContent {
+                val themeColors = CampusComposeTheme.colors
                 var selectedIndex by rememberSaveable { mutableIntStateOf(initialIndex) }
                 var hostOffsetInPage by remember { mutableStateOf(Offset.Zero) }
                 var pageSize by remember { mutableStateOf(IntSize.Zero) }
@@ -165,14 +166,16 @@ internal class CampusLiquidBottomTabsView(
                     pageSize,
                     backgroundImage,
                     pageBackgroundScrim,
-                    pageBackgroundCrop
+                    pageBackgroundCrop,
+                    themeColors.isDark
                 ) {
                     SilkyPageGradientBackdrop(
                         hostOffsetInPage = hostOffsetInPage,
                         pageSize = pageSize,
                         pageBackgroundImage = backgroundImage,
                         pageBackgroundScrim = Color(pageBackgroundScrim),
-                        pageBackgroundCrop = pageBackgroundCrop
+                        pageBackgroundCrop = pageBackgroundCrop,
+                        gradientColors = smoothGradientSamples(themeColors.pageGradient)
                     )
                 }
 
@@ -272,11 +275,11 @@ internal class LoginLiquidModeToggleView(
             ComposeView(context).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setContent {
+                setCampusContent {
+                    val themeColors = CampusComposeTheme.colors
                     val backdrop = rememberCanvasBackdrop {
-                        // Only the capsule draws a surface. A transparent source avoids
-                        // exposing the rectangular Compose host around its four corners.
-                        drawRect(Color.Transparent)
+                        // 登录页没有独立的页面位图，使用所在卡片的底色作为真实折射源。
+                        drawRect(themeColors.surface)
                     }
                     LiquidBottomTabs(
                         selectedTabIndex = { selectedIndexState },
@@ -295,22 +298,22 @@ internal class LoginLiquidModeToggleView(
                         },
                         onDragFinished = onDragFinished,
                         referenceStyle = true,
-                        refractContent = false,
+                        refractContent = true,
                         pressedScale = 1.14f,
                         contentPressedScale = 1.08f,
-                        indicatorLensHorizontal = 2.dp,
-                        indicatorLensVertical = 4.dp,
-                        indicatorChromaticAberration = false,
+                        indicatorLensHorizontal = 10.dp,
+                        indicatorLensVertical = 14.dp,
+                        indicatorChromaticAberration = true,
                         containerSurfaceAlpha = 0.40f,
-                        restingIndicatorAlpha = 0.05f,
+                        restingIndicatorAlpha = 0.10f,
                         indicatorShadowEnabled = false,
                         modifier = Modifier.fillMaxSize()
                     ) {
                         LiquidBottomTab(onClick = { selectedIndexState = 0 }) {
-                            LoginLiquidTabLabel("个人课表", 0, positionState)
+                            LoginLiquidTabLabel("个人课表")
                         }
                         LiquidBottomTab(onClick = { selectedIndexState = 1 }) {
-                            LoginLiquidTabLabel("全校课表", 1, positionState)
+                            LoginLiquidTabLabel("全校课表")
                         }
                     }
                 }
@@ -334,12 +337,12 @@ internal class LoginLiquidModeToggleView(
 }
 
 @Composable
-private fun LoginLiquidTabLabel(label: String, index: Int, selectionPosition: Float) {
-    val selectedAmount = (1f - abs(selectionPosition - index.toFloat())).coerceIn(0f, 1f)
+private fun LoginLiquidTabLabel(label: String) {
+    val themeColors = CampusComposeTheme.colors
     BasicText(
         text = label,
         style = TextStyle(
-            color = lerpColor(Color.Black, Color(0xFF0088FF), selectedAmount),
+            color = themeColors.primaryText,
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold
         )
@@ -351,7 +354,8 @@ internal class SilkyPageGradientBackdrop(
     private val pageSize: IntSize,
     private val pageBackgroundImage: ImageBitmap? = null,
     private val pageBackgroundScrim: Color = Color.Transparent,
-    private val pageBackgroundCrop: BackgroundCropSpec? = null
+    private val pageBackgroundCrop: BackgroundCropSpec? = null,
+    private val gradientColors: List<Color>
 ) : Backdrop {
     override val isCoordinatesDependent: Boolean = true
 
@@ -368,7 +372,7 @@ internal class SilkyPageGradientBackdrop(
         val image = pageBackgroundImage
         drawRect(
             brush = Brush.linearGradient(
-                colors = silkyGradientSamples,
+                colors = gradientColors,
                 start = Offset(-targetOffsetInPage.x, -targetOffsetInPage.y),
                 end = Offset(
                     pageWidth - targetOffsetInPage.x,
@@ -410,24 +414,16 @@ internal class SilkyPageGradientBackdrop(
     }
 }
 
-private val silkyGradientAnchors = listOf(
-    Color(0xFFF3F2F9),
-    Color(0xFFF0F1F9),
-    Color(0xFFEBEFF8),
-    Color(0xFFE3EBF7),
-    Color(0xFFD9E5F4)
-)
-
-private val silkyGradientSamples = List(65) { sampleIndex ->
+private fun smoothGradientSamples(anchors: List<Color>): List<Color> = List(65) { sampleIndex ->
     val position = sampleIndex / 64f
-    val lastSegment = silkyGradientAnchors.size - 2
-    val scaled = position * (silkyGradientAnchors.size - 1)
+    val lastSegment = anchors.size - 2
+    val scaled = position * (anchors.size - 1)
     val segment = scaled.toInt().coerceIn(0, lastSegment)
     val t = (scaled - segment).coerceIn(0f, 1f)
-    val p0 = silkyGradientAnchors[(segment - 1).coerceAtLeast(0)]
-    val p1 = silkyGradientAnchors[segment]
-    val p2 = silkyGradientAnchors[segment + 1]
-    val p3 = silkyGradientAnchors[(segment + 2).coerceAtMost(silkyGradientAnchors.lastIndex)]
+    val p0 = anchors[(segment - 1).coerceAtLeast(0)]
+    val p1 = anchors[segment]
+    val p2 = anchors[segment + 1]
+    val p3 = anchors[(segment + 2).coerceAtMost(anchors.lastIndex)]
     fun channel(a: Float, b: Float, c: Float, d: Float): Float {
         val t2 = t * t
         val t3 = t2 * t
@@ -448,7 +444,7 @@ private val silkyGradientSamples = List(65) { sampleIndex ->
 private val LocalLiquidBottomTabScale = staticCompositionLocalOf { { 1f } }
 
 @Composable
-private fun RowScope.LiquidBottomTab(
+internal fun RowScope.LiquidBottomTab(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
@@ -477,7 +473,7 @@ private fun RowScope.LiquidBottomTab(
 }
 
 @Composable
-private fun LiquidBottomTabs(
+internal fun LiquidBottomTabs(
     selectedTabIndex: () -> Int,
     onTabSelected: (index: Int) -> Unit,
     backdrop: Backdrop,
@@ -497,17 +493,42 @@ private fun LiquidBottomTabs(
     containerSurfaceAlpha: Float? = null,
     restingIndicatorAlpha: Float = 0.10f,
     indicatorShadowEnabled: Boolean = referenceStyle,
+    tapSelectionEnabled: Boolean = false,
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit
 ) {
-    // 主页面始终使用浅色背景，不能跟随系统深色模式切成黑色玻璃。
-    val accentColor = Color(0xFF0088FF)
-    val containerColor = Color(0xFFFAFAFA).copy(
-        alpha = containerSurfaceAlpha ?: if (referenceStyle) 0.40f else 0.26f
-    )
+    val themeColors = CampusComposeTheme.colors
+    val accentColor = themeColors.accent
+    val containerColor = if (themeColors.isDark) {
+        Color(0xFF121212).copy(
+            alpha = containerSurfaceAlpha ?: if (referenceStyle) 0.40f else 0.34f
+        )
+    } else {
+        themeColors.glassSurface.copy(
+            alpha = containerSurfaceAlpha ?: if (referenceStyle) 0.40f else 0.26f
+        )
+    }
     val tabsBackdrop = rememberLayerBackdrop()
+    val isLtr = androidx.compose.ui.platform.LocalLayoutDirection.current == LayoutDirection.Ltr
+    var tappedIndex by remember { mutableIntStateOf(-1) }
+    val tapSelectionModifier = if (tapSelectionEnabled) {
+        Modifier.pointerInput(tabsCount, isLtr) {
+            detectTapGestures { offset ->
+                val tabWidth = size.width.toFloat() / tabsCount.coerceAtLeast(1)
+                val visualIndex = (offset.x / tabWidth)
+                    .toInt()
+                    .fastCoerceIn(0, tabsCount - 1)
+                tappedIndex = if (isLtr) visualIndex else tabsCount - 1 - visualIndex
+            }
+        }
+    } else {
+        Modifier
+    }
 
-    BoxWithConstraints(modifier, contentAlignment = Alignment.CenterStart) {
+    BoxWithConstraints(
+        modifier.then(tapSelectionModifier),
+        contentAlignment = Alignment.CenterStart
+    ) {
         val density = androidx.compose.ui.platform.LocalDensity.current
         val horizontalInset = 4.dp
         val horizontalInsetPx = with(density) { horizontalInset.toPx() }
@@ -524,7 +545,6 @@ private fun LiquidBottomTabs(
                 }
             }
         }
-        val isLtr = androidx.compose.ui.platform.LocalLayoutDirection.current == LayoutDirection.Ltr
         val animationScope = rememberCoroutineScope()
         var currentIndex by remember(selectedTabIndex) {
             mutableIntStateOf(selectedTabIndex())
@@ -559,8 +579,16 @@ private fun LiquidBottomTabs(
                 }
             )
         }
-        LaunchedEffect(selectedTabIndex) {
-            snapshotFlow { selectedTabIndex() }.collectLatest { index -> currentIndex = index }
+        val latestSelectedTabIndex by rememberUpdatedState(selectedTabIndex)
+        LaunchedEffect(Unit) {
+            snapshotFlow { latestSelectedTabIndex() }.collectLatest { index ->
+                currentIndex = index.fastCoerceIn(0, tabsCount - 1)
+            }
+        }
+        LaunchedEffect(tappedIndex) {
+            if (tappedIndex >= 0) {
+                currentIndex = tappedIndex.fastCoerceIn(0, tabsCount - 1)
+            }
         }
         LaunchedEffect(dampedDragAnimation) {
             snapshotFlow { currentIndex }.drop(1).collectLatest { index ->
@@ -614,6 +642,9 @@ private fun LiquidBottomTabs(
                         val scale = lerp(1f, 1f + 16f.dp.toPx() / size.width, progress)
                         scaleX = scale
                         scaleY = scale
+                    },
+                    highlight = {
+                        Highlight.Default.copy(alpha = if (themeColors.isDark) 0.15f else 0.52f)
                     },
                     shadow = null,
                     onDrawSurface = { drawRect(containerColor) }
@@ -726,7 +757,8 @@ private fun LiquidBottomTabs(
                     onDrawSurface = {
                         val progress = dampedDragAnimation.pressProgress
                         drawRect(
-                            Color.Black.copy(restingIndicatorAlpha),
+                            (if (themeColors.isDark) Color.White else Color.Black)
+                                .copy(restingIndicatorAlpha),
                             alpha = 1f - progress
                         )
                         if (referenceStyle) {
@@ -735,13 +767,15 @@ private fun LiquidBottomTabs(
                     }
                 )
                 .height(indicatorHeight)
-                .width(tabWidthDp)
-        )
+                .width(tabWidthDp),
+            contentAlignment = Alignment.Center
+        ) {}
     }
 }
 
 @Composable
 private fun LegacyNavigationIcon(index: Int) {
+    val iconColor = CampusComposeTheme.colors.primaryText
     androidx.compose.foundation.Canvas(Modifier.size(20.dp)) {
         val s = 8.dp.toPx()
         fun drawGlyph(color: Color, stroke: Stroke, verticalOffset: Float) {
@@ -802,14 +836,14 @@ private fun LegacyNavigationIcon(index: Int) {
         }
 
         drawGlyph(
-            color = Color(0xFF111318),
+            color = iconColor,
             stroke = Stroke(1.9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round),
             verticalOffset = 0f
         )
     }
 }
 
-private class DampedDragAnimation(
+internal class DampedDragAnimation(
     private val animationScope: CoroutineScope,
     initialValue: Float,
     private val valueRange: ClosedRange<Float>,

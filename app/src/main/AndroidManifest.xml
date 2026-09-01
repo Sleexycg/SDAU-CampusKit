@@ -9,7 +9,11 @@
         android:theme="@style/AppTheme"
         android:label="WeSDAU课程表"
         android:icon="@drawable/ic_app_icon">
-        <activity android:name=".MainActivity" android:windowSoftInputMode="adjustResize" android:exported="true">
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="uiMode"
+            android:windowSoftInputMode="adjustResize"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

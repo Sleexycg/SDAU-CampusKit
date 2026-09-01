@@ -118,7 +118,9 @@ private class BackgroundEditorBackdrop(
     private val image: ImageBitmap,
     private val crop: BackgroundCropSpec,
     private val clarity: Float,
-    private val pageSize: IntSize
+    private val pageSize: IntSize,
+    private val gradientColors: List<Color>,
+    private val scrimBase: Color
 ) : Backdrop {
     override val isCoordinatesDependent: Boolean = true
 
@@ -133,10 +135,7 @@ private class BackgroundEditorBackdrop(
         val pageHeight = pageSize.height.takeIf { it > 0 }?.toFloat() ?: size.height
         drawRect(
             brush = Brush.linearGradient(
-                listOf(
-                    Color(0xFFF3F2F9), Color(0xFFF0F1F9), Color(0xFFEBEFF8),
-                    Color(0xFFE3EBF7), Color(0xFFD9E5F4)
-                ),
+                gradientColors,
                 start = Offset(-targetOffset.x, -targetOffset.y),
                 end = Offset(pageWidth - targetOffset.x, pageHeight - targetOffset.y)
             )
@@ -161,7 +160,7 @@ private class BackgroundEditorBackdrop(
             filterQuality = FilterQuality.High
         )
         val scrimAlpha = (1f - clarity).coerceIn(0f, 1f)
-        if (scrimAlpha > 0f) drawRect(Color(0xFFEEF1F8).copy(alpha = scrimAlpha))
+        if (scrimAlpha > 0f) drawRect(scrimBase.copy(alpha = scrimAlpha))
     }
 }
 
@@ -175,7 +174,8 @@ private fun resolveBackgroundHintPalette(
     crop: BackgroundCropSpec,
     clarity: Float,
     pageSize: IntSize,
-    density: Float
+    density: Float,
+    darkTheme: Boolean
 ): BackgroundHintPalette {
     if (source.isRecycled || pageSize.width <= 0 || pageSize.height <= 0) {
         return BackgroundHintPalette(Color.White, Color.Black.copy(alpha = 0.68f))
@@ -195,9 +195,9 @@ private fun resolveBackgroundHintPalette(
     val halfSampleHeight = 15f * density
     val scrimColor = android.graphics.Color.argb(
         ((1f - clarity.coerceIn(0.40f, 1f)) * 255f).roundToInt(),
-        238,
-        241,
-        248
+        if (darkTheme) 21 else 238,
+        if (darkTheme) 22 else 241,
+        if (darkTheme) 25 else 248
     )
     val darkForeground = android.graphics.Color.rgb(28, 34, 48)
     val lightForeground = android.graphics.Color.rgb(249, 250, 252)
@@ -213,8 +213,10 @@ private fun resolveBackgroundHintPalette(
             val sourceY = ((pageY - imageTop) / scale).roundToInt().coerceIn(0, source.height - 1)
             val gradientProgress = ((pageX + pageY) / (pageWidth + pageHeight)).coerceIn(0f, 1f)
             val gradientColor = ColorUtils.blendARGB(
-                android.graphics.Color.rgb(243, 242, 249),
-                android.graphics.Color.rgb(217, 229, 244),
+                if (darkTheme) android.graphics.Color.rgb(18, 19, 22)
+                else android.graphics.Color.rgb(243, 242, 249),
+                if (darkTheme) android.graphics.Color.rgb(25, 28, 33)
+                else android.graphics.Color.rgb(217, 229, 244),
                 gradientProgress
             )
             val wallpaperColor = ColorUtils.compositeColors(source.getPixel(sourceX, sourceY), gradientColor)
@@ -260,8 +262,8 @@ internal class LiquidBackgroundEditorView(
             ComposeView(context).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setContent {
-                    val bitmap = sourceBitmap ?: return@setContent
+                setCampusContent {
+                    val bitmap = sourceBitmap ?: return@setCampusContent
                     BackgroundEditorScreen(
                         sourceBitmap = bitmap,
                         source = bitmap.asImageBitmap(),
@@ -325,6 +327,7 @@ private fun BackgroundEditorScreen(
     onCancel: () -> Unit,
     onApply: (BackgroundCropSpec, Float) -> Unit
 ) {
+    val themeColors = CampusComposeTheme.colors
     var clarity by remember { mutableFloatStateOf(initialClarity.coerceIn(0.40f, 1f)) }
     var zoom by remember { mutableFloatStateOf(1f) }
     var imageOffset by remember { mutableStateOf(Offset.Zero) }
@@ -390,12 +393,33 @@ private fun BackgroundEditorScreen(
         if (cropSize.width > 0 && cropSize.height > 0) currentCrop()
         else BackgroundCropSpec(0f, 0f, 1f, 1f)
     }
-    val backgroundBackdrop = remember(source, previewCrop, clarity, cropSize) {
-        BackgroundEditorBackdrop(source, previewCrop, clarity, cropSize)
+    val backgroundBackdrop = remember(source, previewCrop, clarity, cropSize, themeColors.isDark) {
+        BackgroundEditorBackdrop(
+            image = source,
+            crop = previewCrop,
+            clarity = clarity,
+            pageSize = cropSize,
+            gradientColors = themeColors.pageGradient,
+            scrimBase = if (themeColors.isDark) Color(0xFF151619) else Color(0xFFEEF1F8)
+        )
     }
     val density = LocalDensity.current.density
-    val hintPalette = remember(sourceBitmap, previewCrop, clarity, cropSize, density) {
-        resolveBackgroundHintPalette(sourceBitmap, previewCrop, clarity, cropSize, density)
+    val hintPalette = remember(
+        sourceBitmap,
+        previewCrop,
+        clarity,
+        cropSize,
+        density,
+        themeColors.isDark
+    ) {
+        resolveBackgroundHintPalette(
+            sourceBitmap,
+            previewCrop,
+            clarity,
+            cropSize,
+            density,
+            themeColors.isDark
+        )
     }
     val panelReveal = remember { Animatable(1f) }
     LaunchedEffect(panelVisible) {
@@ -495,13 +519,13 @@ private fun BackgroundEditorScreen(
                     backdrop = backgroundBackdrop,
                     shape = { RoundedRectangle(30.dp) },
                     effects = {
-                        blur(18.dp.toPx())
+                        blur((if (themeColors.isDark) 8.dp else 18.dp).toPx())
                         lens(4.dp.toPx(), 8.dp.toPx())
                     },
                     shadow = {
-                        Shadow(radius = 8.dp, color = Color.Black.copy(alpha = 0.08f))
+                        Shadow(radius = 8.dp, color = themeColors.shadow)
                     },
-                    onDrawSurface = { drawRect(Color.White.copy(alpha = 0.30f)) }
+                    onDrawSurface = { drawRect(themeColors.glassSurface) }
                 )
                 .padding(start = 22.dp, top = 22.dp, end = 22.dp, bottom = 34.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -513,11 +537,11 @@ private fun BackgroundEditorScreen(
             ) {
                 BasicText(
                     "背景清晰度",
-                    style = TextStyle(Color(0xFF1C2230), 19.sp, FontWeight.SemiBold)
+                    style = TextStyle(themeColors.primaryText, 19.sp, FontWeight.SemiBold)
                 )
                 BasicText(
                     "${(clarity * 100).roundToInt()}%",
-                    style = TextStyle(Color(0xFF0088FF), 18.sp, FontWeight.Bold)
+                    style = TextStyle(themeColors.accent, 18.sp, FontWeight.Bold)
                 )
             }
             ReferenceLiquidSlider(
@@ -544,7 +568,7 @@ private fun BackgroundEditorScreen(
                 ) {
                     BasicText(
                         "取消",
-                        style = TextStyle(Color(0xFF1C2230), 18.sp, FontWeight.SemiBold)
+                        style = TextStyle(themeColors.primaryText, 18.sp, FontWeight.SemiBold)
                     )
                 }
                 CampusLiquidButton(
@@ -590,7 +614,8 @@ private fun ReferenceLiquidSlider(
     enabled: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val accentColor = Color(0xFF0088FF)
+    val themeColors = CampusComposeTheme.colors
+    val accentColor = themeColors.accent
     val trackColor = Color(0xFF787878).copy(alpha = 0.20f)
     val trackBackdrop = rememberLayerBackdrop()
     BoxWithConstraints(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {

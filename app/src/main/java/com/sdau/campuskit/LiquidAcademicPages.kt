@@ -183,19 +183,12 @@ private fun EmptyRoomLiquidFilterCard(
     textPalette: ScheduleTextPalette,
     onClick: () -> Unit
 ) {
+    val themeColors = CampusComposeTheme.colors
     val backdrop = rememberLayerBackdrop()
     val pageBackgroundImage = remember(pageBackgroundBitmap) {
         pageBackgroundBitmap?.asImageBitmap()
     }
-    val pageGradient = Brush.linearGradient(
-        listOf(
-            Color(0xFFF3F2F9),
-            Color(0xFFF0F1F9),
-            Color(0xFFEBEFF8),
-            Color(0xFFE3EBF7),
-            Color(0xFFD9E5F4)
-        )
-    )
+    val pageGradient = Brush.linearGradient(themeColors.pageGradient)
     val shape = RoundedRectangle(20.dp)
     val textPrimary = Color(textPalette.primary)
     val textSecondary = Color(textPalette.secondary)
@@ -222,14 +215,22 @@ private fun EmptyRoomLiquidFilterCard(
                     backdrop = backdrop,
                     shape = { shape },
                     effects = {
-                        colorControls(brightness = 0.10f, saturation = 0.80f)
-                        blur(7.dp.toPx())
+                        colorControls(
+                            brightness = if (themeColors.isDark) 0f else 0.10f,
+                            saturation = if (themeColors.isDark) 0.54f else 0.80f
+                        )
+                        blur((if (themeColors.isDark) 8.dp else 7.dp).toPx())
                         lens(14.dp.toPx(), 28.dp.toPx())
                     },
                     shadow = null,
-                    highlight = { Highlight.Default.copy(alpha = 0.46f) },
+                    highlight = {
+                        Highlight.Default.copy(alpha = if (themeColors.isDark) 0.10f else 0.46f)
+                    },
                     onDrawSurface = {
-                        drawRect(Color(0xFFEEF1F8).copy(alpha = 0.22f))
+                        drawRect(
+                            if (themeColors.isDark) themeColors.glassSurface
+                            else Color(0xFFEEF1F8).copy(alpha = 0.22f)
+                        )
                     }
                 )
                 .clickable(
@@ -297,19 +298,12 @@ private fun EmptyRoomLiquidGroupCard(
     textPalette: ScheduleTextPalette,
     onExpandedChanged: (Boolean) -> Unit
 ) {
+    val themeColors = CampusComposeTheme.colors
     val backdrop = rememberLayerBackdrop()
     val pageBackgroundImage = remember(pageBackgroundBitmap) {
         pageBackgroundBitmap?.asImageBitmap()
     }
-    val pageGradient = Brush.linearGradient(
-        listOf(
-            Color(0xFFF3F2F9),
-            Color(0xFFF0F1F9),
-            Color(0xFFEBEFF8),
-            Color(0xFFE3EBF7),
-            Color(0xFFD9E5F4)
-        )
-    )
+    val pageGradient = Brush.linearGradient(themeColors.pageGradient)
     val textPrimary = Color(textPalette.primary)
     val textShadow = scheduleTextShadow(textPalette)
     var expanded by remember(groupKey) { mutableStateOf(initiallyExpanded) }
@@ -341,14 +335,22 @@ private fun EmptyRoomLiquidGroupCard(
                     backdrop = backdrop,
                     shape = { cardShape },
                     effects = {
-                        colorControls(brightness = 0.15f, saturation = 0.72f)
-                        blur(9.dp.toPx())
+                        colorControls(
+                            brightness = if (themeColors.isDark) 0f else 0.15f,
+                            saturation = if (themeColors.isDark) 0.54f else 0.72f
+                        )
+                        blur((if (themeColors.isDark) 8.dp else 9.dp).toPx())
                         lens(16.dp.toPx(), 32.dp.toPx())
                     },
                     shadow = null,
-                    highlight = { Highlight.Default.copy(alpha = 0.50f) },
+                    highlight = {
+                        Highlight.Default.copy(alpha = if (themeColors.isDark) 0.10f else 0.50f)
+                    },
                     onDrawSurface = {
-                        drawRect(Color(0xFFEEF1F8).copy(alpha = 0.28f))
+                        drawRect(
+                            if (themeColors.isDark) themeColors.glassSurface
+                            else Color(0xFFEEF1F8).copy(alpha = 0.28f)
+                        )
                     }
                 )
                 .animateContentSize(
@@ -467,6 +469,7 @@ private fun ExamLiquidScrollPage(
     pageBackgroundScrim: Int,
     textPalette: ScheduleTextPalette
 ) {
+    val themeColors = CampusComposeTheme.colors
     val backdrop = rememberLayerBackdrop()
     val pageBackgroundImage = remember(pageBackgroundBitmap) {
         pageBackgroundBitmap?.asImageBitmap()
@@ -476,15 +479,7 @@ private fun ExamLiquidScrollPage(
     val textPrimary = Color(textPalette.primary)
     val textSecondary = Color(textPalette.secondary)
     val textShadow = scheduleTextShadow(textPalette)
-    val pageGradient = Brush.linearGradient(
-        listOf(
-            Color(0xFFF3F2F9),
-            Color(0xFFF0F1F9),
-            Color(0xFFEBEFF8),
-            Color(0xFFE3EBF7),
-            Color(0xFFD9E5F4)
-        )
-    )
+    val pageGradient = Brush.linearGradient(themeColors.pageGradient)
     val sortedRecords = remember(records) {
         records.sortedWith(
             compareBy<RemoteExam>(
@@ -540,7 +535,16 @@ private fun ExamLiquidScrollPage(
                                 shape = { RoundedRectangle(20.dp) },
                                 effects = {
                                     vibrancy()
+                                    if (themeColors.isDark) {
+                                        colorControls(brightness = 0f, saturation = 0.54f)
+                                    }
                                     lens(16.dp.toPx(), 32.dp.toPx())
+                                },
+                                highlight = {
+                                    Highlight.Default.copy(alpha = if (themeColors.isDark) 0.10f else 0.42f)
+                                },
+                                onDrawSurface = {
+                                    if (themeColors.isDark) drawRect(themeColors.glassSurface)
                                 }
                             )
                             .padding(horizontal = 18.dp, vertical = 17.dp)
@@ -644,6 +648,6 @@ private fun scheduleTextShadow(textPalette: ScheduleTextPalette): Shadow? =
         Shadow(
             color = Color(textPalette.halo),
             offset = Offset.Zero,
-            blurRadius = 1.6f
+            blurRadius = 2.6f
         )
     } else null

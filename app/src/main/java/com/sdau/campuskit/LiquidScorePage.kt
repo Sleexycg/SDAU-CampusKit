@@ -143,19 +143,12 @@ internal fun createScoreTermSelectorView(
     termSelectorExpanded: State<Boolean>,
     onTermClick: (android.graphics.Rect) -> Unit
 ): View = composeHostView(context) {
+    val themeColors = CampusComposeTheme.colors
     val backdrop = rememberLayerBackdrop()
     val pageBackgroundImage = remember(pageBackgroundBitmap) {
         pageBackgroundBitmap?.asImageBitmap()
     }
-    val pageGradient = Brush.linearGradient(
-        listOf(
-            Color(0xFFF3F2F9),
-            Color(0xFFF0F1F9),
-            Color(0xFFEBEFF8),
-            Color(0xFFE3EBF7),
-            Color(0xFFD9E5F4)
-        )
-    )
+    val pageGradient = Brush.linearGradient(themeColors.pageGradient)
     Box {
         PageAlignedBackdropSource(
             backdrop = backdrop,
@@ -185,6 +178,7 @@ private fun ScoreTermSelector(
     textPalette: ScheduleTextPalette,
     onClick: (android.graphics.Rect) -> Unit
 ) {
+    val themeColors = CampusComposeTheme.colors
     val textPrimary = Color(textPalette.primary)
     val textSecondary = Color(textPalette.secondary)
     val textShadow = scheduleTextShadow(textPalette)
@@ -212,12 +206,22 @@ private fun ScoreTermSelector(
                 shape = { RoundedRectangle(14.dp) },
                 effects = {
                     vibrancy()
+                    if (themeColors.isDark) {
+                        colorControls(brightness = 0f, saturation = 0.54f)
+                    }
                     blur(4.dp.toPx())
                     lens(8.dp.toPx(), 16.dp.toPx())
                 },
                 shadow = null,
-                highlight = { Highlight.Default.copy(alpha = 0.46f) },
-                onDrawSurface = { drawRect(Color.White.copy(alpha = 0.16f)) }
+                highlight = {
+                    Highlight.Default.copy(alpha = if (themeColors.isDark) 0.10f else 0.46f)
+                },
+                onDrawSurface = {
+                    drawRect(
+                        if (themeColors.isDark) Color.White.copy(alpha = 0.08f)
+                        else Color.White.copy(alpha = 0.16f)
+                    )
+                }
             )
             .clickable(
                 interactionSource = null,
@@ -276,6 +280,7 @@ private fun ScoreLiquidScrollPage(
     onScoreClick: (RemoteScore) -> Unit,
     onExport: () -> Unit
 ) {
+    val themeColors = CampusComposeTheme.colors
     val backdrop = rememberLayerBackdrop()
     val pageBackgroundImage = remember(pageBackgroundBitmap) {
         pageBackgroundBitmap?.asImageBitmap()
@@ -285,15 +290,7 @@ private fun ScoreLiquidScrollPage(
     val textPrimary = Color(textPalette.primary)
     val textSecondary = Color(textPalette.secondary)
     val textShadow = scheduleTextShadow(textPalette)
-    val pageGradient = Brush.linearGradient(
-        listOf(
-            Color(0xFFF3F2F9),
-            Color(0xFFF0F1F9),
-            Color(0xFFEBEFF8),
-            Color(0xFFE3EBF7),
-            Color(0xFFD9E5F4)
-        )
-    )
+    val pageGradient = Brush.linearGradient(themeColors.pageGradient)
     Box(Modifier.fillMaxSize()) {
         // This is the actual source sampled by every card and by the export button.
         PageAlignedBackdropSource(
@@ -343,13 +340,21 @@ private fun ScoreLiquidScrollPage(
                         shape = { RoundedRectangle(24.dp) },
                         effects = {
                             vibrancy()
+                            if (themeColors.isDark) {
+                                colorControls(brightness = 0f, saturation = 0.54f)
+                            }
                             blur(5.dp.toPx())
                             lens(12.dp.toPx(), 24.dp.toPx())
                         },
                         shadow = null,
-                        highlight = { Highlight.Default.copy(alpha = 0.50f) },
+                        highlight = {
+                            Highlight.Default.copy(alpha = if (themeColors.isDark) 0.10f else 0.50f)
+                        },
                         onDrawSurface = {
-                            drawRect(Color.White.copy(alpha = 0.18f))
+                            drawRect(
+                                if (themeColors.isDark) themeColors.glassSurface
+                                else Color.White.copy(alpha = 0.18f)
+                            )
                         }
                     )
                     .padding(horizontal = 12.dp, vertical = 18.dp),
@@ -376,7 +381,7 @@ private fun ScoreLiquidScrollPage(
                 ScoreMetric(
                     label = "总学分",
                     value = result.totalCredits,
-                    valueColor = Color(0xFF324099),
+                    valueColor = if (themeColors.isDark) Color(0xFF8EA4FF) else Color(0xFF324099),
                     textSecondary = textSecondary,
                     secondaryFontWeight = secondaryFontWeight,
                     secondaryShadow = textShadow,
@@ -394,7 +399,16 @@ private fun ScoreLiquidScrollPage(
                                 shape = { RoundedRectangle(20.dp) },
                                 effects = {
                                     vibrancy()
+                                    if (themeColors.isDark) {
+                                        colorControls(brightness = 0f, saturation = 0.54f)
+                                    }
                                     lens(16.dp.toPx(), 32.dp.toPx())
+                                },
+                                highlight = {
+                                    Highlight.Default.copy(alpha = if (themeColors.isDark) 0.10f else 0.42f)
+                                },
+                                onDrawSurface = {
+                                    if (themeColors.isDark) drawRect(themeColors.glassSurface)
                                 }
                             )
                             .clickable(
@@ -497,7 +511,7 @@ private fun scheduleTextShadow(textPalette: ScheduleTextPalette): Shadow? =
         Shadow(
             color = Color(textPalette.halo),
             offset = Offset.Zero,
-            blurRadius = 1.6f
+            blurRadius = 2.6f
         )
     } else null
 
@@ -506,6 +520,7 @@ private fun SurfaceLiquidExportButton(
     backdrop: com.kyant.backdrop.Backdrop,
     onClick: () -> Unit
 ) {
+    val themeColors = CampusComposeTheme.colors
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
@@ -528,8 +543,10 @@ private fun SurfaceLiquidExportButton(
                     blur(8.dp.toPx())
                     lens(12.dp.toPx(), 24.dp.toPx())
                 },
-                highlight = { Highlight.Default.copy(alpha = 0.72f) },
-                onDrawSurface = { drawRect(Color.White.copy(alpha = 0.30f)) }
+                highlight = {
+                    Highlight.Default.copy(alpha = if (themeColors.isDark) 0.12f else 0.72f)
+                },
+                onDrawSurface = { drawRect(themeColors.glassSurface) }
             )
             .clip(CircleShape)
             .clickable(
@@ -542,7 +559,7 @@ private fun SurfaceLiquidExportButton(
         contentAlignment = Alignment.Center
     ) {
         Canvas(Modifier.size(24.dp)) {
-            val color = Color(0xFF0088FF)
+            val color = themeColors.accent
             val stroke = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
             val cx = size.width / 2f
             drawLine(color, Offset(cx, size.height * 0.13f), Offset(cx, size.height * 0.62f), stroke.width, stroke.cap)

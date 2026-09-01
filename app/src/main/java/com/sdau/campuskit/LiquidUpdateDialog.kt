@@ -124,7 +124,7 @@ internal class LiquidUpdateDialogView(
             ComposeView(context).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setContent {
+                setCampusContent {
                     LiquidUpdateDialog(
                         pageSnapshot = pageSnapshot,
                         versionName = versionName,
@@ -162,11 +162,12 @@ private fun LiquidUpdateDialog(
     onDismiss: () -> Unit,
     onUpdate: () -> Unit
 ) {
-    val contentColor = Color(0xFF171923)
+    val themeColors = CampusComposeTheme.colors
+    val contentColor = themeColors.primaryText
     val secondaryColor = contentColor.copy(alpha = 0.68f)
-    val accentColor = Color(0xFF0088FF)
-    val containerColor = Color(0xFFFAFAFA).copy(alpha = 0.42f)
-    val dimColor = Color(0xFF29293A).copy(alpha = 0.23f)
+    val accentColor = themeColors.accent
+    val containerColor = themeColors.glassSurface
+    val dimColor = themeColors.dialogScrim
     val snapshotImage = remember(pageSnapshot) { pageSnapshot?.asImageBitmap() }
     val backdrop = rememberLayerBackdrop()
 
@@ -189,7 +190,7 @@ private fun LiquidUpdateDialog(
                     contentScale = ContentScale.FillBounds
                 )
             } else {
-                Box(Modifier.fillMaxSize().background(Color(0xFFE9EFF8)))
+                Box(Modifier.fillMaxSize().background(themeColors.pageBackground))
             }
             Box(Modifier.fillMaxSize().background(dimColor))
         }
@@ -212,11 +213,16 @@ private fun LiquidUpdateDialog(
                     backdrop = backdrop,
                     shape = { RoundedRectangle(48.dp) },
                     effects = {
-                        colorControls(brightness = 0.08f, saturation = 1.35f)
-                        blur(12.dp.toPx())
+                        colorControls(
+                            brightness = if (themeColors.isDark) 0f else 0.08f,
+                            saturation = if (themeColors.isDark) 0.54f else 1.35f
+                        )
+                        blur((if (themeColors.isDark) 8.dp else 12.dp).toPx())
                         lens(24.dp.toPx(), 48.dp.toPx(), depthEffect = true)
                     },
-                    highlight = { Highlight.Plain },
+                    highlight = {
+                        Highlight.Plain.copy(alpha = if (themeColors.isDark) 0.12f else 1f)
+                    },
                     onDrawSurface = { drawRect(containerColor) }
                 )
                 .clickable(
@@ -293,31 +299,15 @@ private fun DialogAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val themeColors = CampusComposeTheme.colors
     if (style == LiquidButtonStyle.TRANSPARENT) {
-        // Match the reference Dialog's Cancel action exactly: this is a quiet,
-        // translucent capsule rather than a second refractive/tinted button.
-        // Avoiding drawBackdrop here also prevents the cancel action from looking gray.
-        Row(
-            modifier
-                .height(48.dp)
-                .clip(Capsule())
-                .background(Color(0xFFFAFAFA).copy(alpha = 0.20f))
-                .clickable(
-                    enabled = enabled,
-                    interactionSource = null,
-                    indication = null,
-                    role = Role.Button,
-                    onClick = onClick
-                )
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            BasicText(
-                label,
-                style = TextStyle(foreground.copy(alpha = if (enabled) 1f else 0.72f), 16.sp)
-            )
-        }
+        QuietDialogAction(
+            label = label,
+            foreground = foreground,
+            enabled = enabled,
+            onClick = onClick,
+            modifier = modifier
+        )
         return
     }
 
@@ -345,4 +335,3 @@ private fun DialogAction(
  * both in the same composition makes the lens sample new background coordinates on
  * every scroll frame instead of translating a pre-rendered Android child layer.
  */
-

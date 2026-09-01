@@ -2,6 +2,7 @@ package com.sdau.campuskit
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.graphics.Color as AndroidColor
 import android.text.Editable
 import android.text.InputType
@@ -9,6 +10,7 @@ import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -81,6 +83,8 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -138,9 +142,23 @@ internal class LiquidCourseDialogView(
     onDelete: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) : FrameLayout(context) {
+    private val hostImeVisible = mutableStateOf(false)
+    private val visibleWindowFrame = Rect()
+    private val keyboardLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+        updateImeVisibilityFromWindow()
+    }
+
     init {
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         isClickable = true
+        ViewCompat.setOnApplyWindowInsetsListener(this) { _, insets ->
+            val imeInsets = insets.getInsets(WindowInsetsCompat.Type.ime())
+            val navigationInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            val visible = insets.isVisible(WindowInsetsCompat.Type.ime()) ||
+                imeInsets.bottom > navigationInsets.bottom
+            if (hostImeVisible.value != visible) hostImeVisible.value = visible
+            insets
+        }
         addView(
             composeHostView(context) {
                 LiquidCourseDialog(
@@ -156,6 +174,7 @@ internal class LiquidCourseDialogView(
                     initialSlotCount = initialSlotCount,
                     maxSlotCount = maxSlotCount,
                     allowDurationEdit = allowDurationEdit,
+                    hostImeVisible = hostImeVisible.value,
                     onSave = onSave,
                     onDelete = onDelete,
                     onDismiss = onDismiss
@@ -163,6 +182,35 @@ internal class LiquidCourseDialogView(
             },
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         )
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        viewTreeObserver.addOnGlobalLayoutListener(keyboardLayoutListener)
+        ViewCompat.requestApplyInsets(this)
+        post(::updateImeVisibilityFromWindow)
+    }
+
+    override fun onDetachedFromWindow() {
+        if (viewTreeObserver.isAlive) {
+            viewTreeObserver.removeOnGlobalLayoutListener(keyboardLayoutListener)
+        }
+        super.onDetachedFromWindow()
+    }
+
+    private fun updateImeVisibilityFromWindow() {
+        if (!isAttachedToWindow) return
+        getWindowVisibleDisplayFrame(visibleWindowFrame)
+        val obscuredHeight = (rootView.height - visibleWindowFrame.bottom).coerceAtLeast(0)
+        val threshold = (96f * resources.displayMetrics.density).roundToInt()
+        val insets = ViewCompat.getRootWindowInsets(this)
+        val visibleFromInsets = insets?.let {
+            it.isVisible(WindowInsetsCompat.Type.ime()) ||
+                it.getInsets(WindowInsetsCompat.Type.ime()).bottom >
+                it.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom
+        } == true
+        val visible = visibleFromInsets || obscuredHeight > threshold
+        if (hostImeVisible.value != visible) hostImeVisible.value = visible
     }
 
     fun releaseSnapshot() {
@@ -189,6 +237,7 @@ private fun LiquidCourseDialog(
     initialSlotCount: Int,
     maxSlotCount: Int,
     allowDurationEdit: Boolean,
+    hostImeVisible: Boolean,
     onSave: (
         name: String,
         room: String,
@@ -199,11 +248,16 @@ private fun LiquidCourseDialog(
     onDelete: (() -> Unit)?,
     onDismiss: () -> Unit
 ) {
-    val contentColor = Color(0xFF171923)
+    val themeColors = CampusComposeTheme.colors
+    val contentColor = themeColors.primaryText
     val secondaryColor = contentColor.copy(alpha = 0.66f)
-    val accentColor = Color(0xFF0088FF)
-    val containerColor = Color(0xFFF2F4F8).copy(alpha = 0.42f)
-    val dimColor = Color(0xFF29293A).copy(alpha = 0.23f)
+    val accentColor = themeColors.accent
+    val containerColor = if (themeColors.isDark) {
+        themeColors.glassStrongSurface
+    } else {
+        themeColors.glassSurface
+    }
+    val dimColor = themeColors.dialogScrim
     val snapshotImage = remember(pageSnapshot) { pageSnapshot?.asImageBitmap() }
     val backdrop = rememberLayerBackdrop()
     val density = LocalDensity.current
@@ -214,7 +268,7 @@ private fun LiquidCourseDialog(
     var weeks by remember(initialWeeks) { mutableStateOf(initialWeeks) }
     var slotCount by remember(initialSlotCount) { mutableStateOf(initialSlotCount.toString()) }
     val availableSlotCount = maxSlotCount.coerceAtLeast(1)
-    val imeVisible = WindowInsets.isImeVisible
+    val imeVisible = hostImeVisible || WindowInsets.isImeVisible
     var keyboardRaised by remember { mutableStateOf(false) }
     LaunchedEffect(imeVisible) {
         if (imeVisible) {
@@ -244,7 +298,7 @@ private fun LiquidCourseDialog(
                     contentScale = ContentScale.FillBounds
                 )
             } else {
-                Box(Modifier.fillMaxSize().background(Color(0xFFE9EFF8)))
+                Box(Modifier.fillMaxSize().background(themeColors.pageBackground))
             }
             Box(Modifier.fillMaxSize().background(dimColor))
         }
@@ -269,12 +323,17 @@ private fun LiquidCourseDialog(
                         shape = { RoundedRectangle(28.dp) },
                         effects = {
                             vibrancy()
-                            colorControls(brightness = 0.14f, saturation = 0.80f)
-                            blur(18.dp.toPx())
+                            colorControls(
+                                brightness = if (themeColors.isDark) 0f else 0.14f,
+                                saturation = if (themeColors.isDark) 0.54f else 0.80f
+                            )
+                            blur((if (themeColors.isDark) 8.dp else 18.dp).toPx())
                             lens(12.dp.toPx(), 24.dp.toPx(), depthEffect = true)
                         },
                         shadow = null,
-                        highlight = { Highlight.Default.copy(alpha = 0.58f) },
+                        highlight = {
+                            Highlight.Default.copy(alpha = if (themeColors.isDark) 0.12f else 0.58f)
+                        },
                         onDrawSurface = { drawRect(containerColor) }
                     )
                     .clickable(interactionSource = null, indication = null, onClick = {})
@@ -436,7 +495,7 @@ private fun CourseDetailLine(
             painter = painterResource(iconRes),
             contentDescription = null,
             modifier = Modifier.size(24.dp),
-            colorFilter = ColorFilter.tint(Color(0xFF0088FF))
+            colorFilter = ColorFilter.tint(CampusComposeTheme.colors.accent)
         )
         BasicText(
             label,
@@ -458,7 +517,8 @@ private fun CourseLiquidTextField(
     keyboardAlreadyVisible: Boolean,
     onValueChange: (String) -> Unit
 ) {
-    val contentColor = Color(0xFF171923)
+    val themeColors = CampusComposeTheme.colors
+    val contentColor = themeColors.primaryText
     val fieldShape = RoundedCornerShape(16.dp)
     Column(
         Modifier
@@ -468,8 +528,8 @@ private fun CourseLiquidTextField(
             // root backdrop again here would reveal a clearer copy of the original
             // timetable inside every field, so fields only tint the blurred shell.
             .clip(fieldShape)
-            .background(Color(0xFFF2F4F8).copy(alpha = 0.22f), fieldShape)
-            .border(1.dp, Color.White.copy(alpha = 0.68f), fieldShape)
+            .background(themeColors.glassSubtleSurface, fieldShape)
+            .border(1.dp, themeColors.glassOutline, fieldShape)
             .padding(horizontal = 14.dp, vertical = 7.dp)
     ) {
         BasicText(label, style = TextStyle(contentColor.copy(alpha = 0.62f), 10.sp, FontWeight.Medium))
@@ -488,6 +548,10 @@ private fun CourseLiquidTextField(
                 }
             },
             update = { field ->
+                field.setTextColor(
+                    if (themeColors.isDark) AndroidColor.rgb(243, 245, 248)
+                    else AndroidColor.rgb(23, 25, 35)
+                )
                 field.onCourseTextChanged = onValueChange
                 field.updateCourseText(value)
                 // When the IME is already on screen, changing fields must only move
@@ -535,6 +599,10 @@ private fun CourseLiquidIconButton(
     contentDescription: String,
     onClick: () -> Unit
 ) {
+    val animationScope = rememberCoroutineScope()
+    val interactiveHighlight = remember(animationScope) {
+        InteractiveHighlight(animationScope = animationScope)
+    }
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
@@ -542,7 +610,8 @@ private fun CourseLiquidIconButton(
         animationSpec = spring(dampingRatio = 0.62f, stiffness = 420f),
         label = "courseDialogIconScale"
     )
-    val accentColor = if (icon == CourseDialogIcon.DELETE) Color(0xFFF05252) else Color(0xFF0088FF)
+    val themeColors = CampusComposeTheme.colors
+    val accentColor = if (icon == CourseDialogIcon.DELETE) Color(0xFFF05252) else themeColors.accent
     Box(
         Modifier
             .size(44.dp)
@@ -555,12 +624,36 @@ private fun CourseLiquidIconButton(
                 shape = { Capsule() },
                 effects = {
                     vibrancy()
-                    colorControls(brightness = 0.14f, saturation = 0.84f)
+                    colorControls(
+                        brightness = if (themeColors.isDark) 0f else 0.14f,
+                        saturation = if (themeColors.isDark) 0.54f else 0.84f
+                    )
                     blur(8.dp.toPx())
                     lens(12.dp.toPx(), 24.dp.toPx())
                 },
-                highlight = { Highlight.Default.copy(alpha = 0.72f) },
-                onDrawSurface = { drawRect(Color.White.copy(alpha = 0.38f)) }
+                highlight = {
+                    Highlight.Default.copy(
+                        alpha = interactiveHighlight.pressProgress *
+                            if (themeColors.isDark) 0.18f else 0.68f
+                    )
+                },
+                onDrawSurface = {
+                    drawRect(
+                        if (themeColors.isDark) themeColors.glassStrongSurface
+                        else themeColors.glassSurface
+                    )
+                }
+            )
+            .then(
+                if (themeColors.isDark) {
+                    Modifier.border(
+                        width = 1.dp,
+                        color = Color.White.copy(alpha = 0.28f),
+                        shape = CircleShape
+                    )
+                } else {
+                    Modifier
+                }
             )
             .clip(CircleShape)
             .clickable(
@@ -569,6 +662,8 @@ private fun CourseLiquidIconButton(
                 role = Role.Button,
                 onClick = onClick
             )
+            .then(interactiveHighlight.modifier)
+            .then(interactiveHighlight.gestureModifier)
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center
     ) {

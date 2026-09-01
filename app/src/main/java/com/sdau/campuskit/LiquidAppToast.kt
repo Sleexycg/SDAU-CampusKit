@@ -50,7 +50,9 @@ import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.colorControls
 import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.RoundedRectangle
@@ -90,9 +92,12 @@ internal class LiquidAppToastView(
                 isClickable = false
                 isFocusable = false
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setContent {
+                setCampusContent {
+                    val themeColors = CampusComposeTheme.colors
                     val snapshotImage = remember(pageSnapshot) { pageSnapshot?.asImageBitmap() }
-                    val backdrop = remember(snapshotImage) { ToastSnapshotBackdrop(snapshotImage) }
+                    val backdrop = remember(snapshotImage, themeColors.isDark) {
+                        ToastSnapshotBackdrop(snapshotImage, themeColors.pageGradient)
+                    }
                     Box(Modifier.fillMaxSize()) {
                         LiquidStatusToast(
                             visible = visibleState.value,
@@ -166,7 +171,8 @@ internal fun LiquidStatusToast(
         ),
         label = "liquidStatusToastLoadingRotation"
     )
-    val accent = Color(0xFF0088FF)
+    val themeColors = CampusComposeTheme.colors
+    val accent = themeColors.accent
 
     Row(
         modifier
@@ -178,16 +184,30 @@ internal fun LiquidStatusToast(
                 backdrop = backdrop,
                 shape = { RoundedRectangle(24.dp) },
                 effects = {
-                    blur(14.dp.toPx())
+                    if (themeColors.isDark) {
+                        colorControls(brightness = 0f, saturation = 0.48f)
+                    }
+                    blur((if (themeColors.isDark) 8.dp else 14.dp).toPx())
                     lens(3.dp.toPx(), 7.dp.toPx())
                 },
+                highlight = {
+                    Highlight.Default.copy(alpha = if (themeColors.isDark) 0.12f else 0.52f)
+                },
                 shadow = {
-                    Shadow(radius = 7.dp, color = Color.Black.copy(alpha = 0.10f))
+                    Shadow(radius = 7.dp, color = themeColors.shadow)
                 },
                 innerShadow = {
-                    InnerShadow(radius = 2.dp, color = Color.White.copy(alpha = 0.28f))
+                    InnerShadow(
+                        radius = 2.dp,
+                        color = Color.White.copy(alpha = if (themeColors.isDark) 0.08f else 0.28f)
+                    )
                 },
-                onDrawSurface = { drawRect(Color(0xFFF8FAFF).copy(alpha = 0.48f)) }
+                onDrawSurface = {
+                    drawRect(
+                        if (themeColors.isDark) themeColors.glassStrongSurface.copy(alpha = 0.82f)
+                        else Color(0xFFF8FAFF).copy(alpha = 0.48f)
+                    )
+                }
             )
             .padding(horizontal = 16.dp, vertical = 11.dp),
         horizontalArrangement = Arrangement.spacedBy(11.dp),
@@ -295,6 +315,7 @@ internal fun LiquidStatusToast(
                                 style = Stroke(width = 1.7.dp.toPx(), cap = StrokeCap.Round)
                             )
                         } else {
+                            if (!themeColors.isDark) {
                             drawLine(
                                 color = Color.White.copy(alpha = 0.86f),
                                 start = Offset(size.width * 0.15f, size.height * 0.16f),
@@ -302,6 +323,7 @@ internal fun LiquidStatusToast(
                                 strokeWidth = 4.2.dp.toPx(),
                                 cap = StrokeCap.Round
                             )
+                            }
                             drawLine(
                                 color = accent,
                                 start = Offset(size.width * 0.15f, size.height * 0.16f),
@@ -337,7 +359,7 @@ internal fun LiquidStatusToast(
         BasicText(
             displayMessage,
             style = TextStyle(
-                color = Color(0xFF1C2230),
+                color = themeColors.primaryText,
                 fontSize = 15.sp,
                 fontWeight = FontWeight.SemiBold
             )
@@ -346,7 +368,8 @@ internal fun LiquidStatusToast(
 }
 
 private class ToastSnapshotBackdrop(
-    private val snapshot: ImageBitmap?
+    private val snapshot: ImageBitmap?,
+    private val fallbackGradient: List<Color>
 ) : Backdrop {
     override val isCoordinatesDependent: Boolean = true
 
@@ -359,7 +382,7 @@ private class ToastSnapshotBackdrop(
             if (coordinates?.isAttached == true) coordinates.positionInRoot() else Offset.Zero
         drawRect(
             brush = Brush.linearGradient(
-                listOf(Color(0xFFF9F8FC), Color(0xFFF2F5FA), Color(0xFFEAF1FA)),
+                fallbackGradient,
                 start = Offset(-targetOffset.x, -targetOffset.y),
                 end = Offset(size.width - targetOffset.x, size.height - targetOffset.y)
             )
