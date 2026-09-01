@@ -7,21 +7,35 @@
 
   const apkLinks = [...document.querySelectorAll('[data-apk-download]')];
   if (apkLinks.length) {
-    fetch('https://api.github.com/repos/Sleexycg/WeSDAU/contents/docs/downloads', {
-      headers: { Accept: 'application/vnd.github+json' },
-    })
-      .then((response) => (response.ok ? response.json() : []))
-      .then((files) => {
-        const apk = files.find((file) => file.type === 'file' && file.name.toLowerCase().endsWith('.apk'));
-        if (!apk) return;
-        const downloadUrl = `./downloads/${encodeURIComponent(apk.name)}`;
-        apkLinks.forEach((link) => {
-          link.href = downloadUrl;
-        });
-      })
-      .catch(() => {
-        // Keep the directory fallback when the GitHub API is temporarily unavailable.
-      });
+    const apkUrlPromise = (async () => {
+      const folders = [
+        ['docs/downloads', './downloads/'],
+        ['downloads', './downloads/'],
+      ];
+      for (const [apiPath, pagePath] of folders) {
+        try {
+          const response = await fetch(`https://api.github.com/repos/Sleexycg/WeSDAU/contents/${apiPath}`, {
+            headers: { Accept: 'application/vnd.github+json' },
+          });
+          if (!response.ok) continue;
+          const files = await response.json();
+          const apk = files.find((file) => file.type === 'file' && file.name.toLowerCase().endsWith('.apk'));
+          if (apk) return `${pagePath}${encodeURIComponent(apk.name)}`;
+        } catch {
+          // Try the next location, then use the local fallback below.
+        }
+      }
+      return './downloads/WeSDAU-v0.3.8-beta.apk';
+    })();
+
+    apkLinks.forEach((link) => link.addEventListener('click', async (event) => {
+      if (link.dataset.apkReady === 'true') return;
+      event.preventDefault();
+      const downloadUrl = await apkUrlPromise;
+      link.href = downloadUrl;
+      link.dataset.apkReady = 'true';
+      link.click();
+    }));
   }
 
   const typewriter = document.querySelector('[data-typewriter]');
