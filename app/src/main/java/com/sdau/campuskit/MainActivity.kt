@@ -8117,8 +8117,26 @@ class MainActivity : ComponentActivity() {
             }
             // 汉字每行最多三个；英文、数字和符号按卡片实际宽度尽量多排。
             appendWrapped(course.name, hanCharacterLimit = 3)
-            formatRoom(course.room).split('\n').forEach { roomLine ->
-                val compactCode = roomLine.length <= 6 && roomLine.matches(Regex("^@[A-Za-z0-9-]+$"))
+            val formattedRoom = formatRoom(course.room)
+            if (formattedRoom.startsWith("@图信楼\n")) {
+                // 图信楼地点使用固定的两段语义布局；绘制阶段会在必要时
+                // 轻微压缩单行字号，不能再把“图信楼”或“大厅A区”拆散。
+                result.addAll(formattedRoom.split('\n'))
+            } else formattedRoom.split('\n').forEach { roomLine ->
+                // Keep a classroom suffix together. Pixel-based wrapping can otherwise
+                // split visually equivalent rooms differently (for example A418 may fit
+                // while the final 9 in A409 falls onto a third line on some system fonts).
+                val semanticRoom = Regex(
+                    "^(@.*[\\u3400-\\u4DBF\\u4E00-\\u9FFF\\uF900-\\uFAFF])" +
+                        "([A-Za-z]\\d{3}(?:-[A-Za-z])?|\\d{3})$"
+                ).matchEntire(roomLine)
+                if (semanticRoom != null) {
+                    result.add(semanticRoom.groupValues[1])
+                    result.add(semanticRoom.groupValues[2])
+                    return@forEach
+                }
+                val compactCode = roomLine.length <= 6 &&
+                    roomLine.matches(Regex("^@[A-Za-z0-9-]+$"))
                 val completeBuilding = roomLine.matches(Regex("^\\d+号楼$"))
                 if (compactCode || completeBuilding) result.add(roomLine) else appendWrapped(roomLine)
             }
@@ -8289,8 +8307,8 @@ class MainActivity : ComponentActivity() {
         if (numberedBuilding != null) {
             return "@${numberedBuilding.groupValues[1]}\n${numberedBuilding.groupValues[2]}号楼\n${numberedBuilding.groupValues[3]}"
         }
-        val mapBuilding = Regex("^图信(楼.*)$").find(normalized)
-        if (mapBuilding != null) return "@图信\n${mapBuilding.groupValues[1]}"
+        val mapBuilding = Regex("^图信楼(.+)$").find(normalized)
+        if (mapBuilding != null) return "@图信楼\n${mapBuilding.groupValues[1]}"
         return "@$room"
     }
 
@@ -8372,8 +8390,9 @@ class MainActivity : ComponentActivity() {
                 maxSlotCount = maxSlotCount,
                 allowDurationEdit = true,
                 onSave = { name, room, teacher, weeks, slotCount ->
-                    addCourseToCache(day, startSlot, slotCount, name, room, teacher, weeks, week)
-                    hideCourseDetails()
+                    if (addCourseToCache(day, startSlot, slotCount, name, room, teacher, weeks, week)) {
+                        hideCourseDetails()
+                    }
                 },
                 onDismiss = ::hideCourseDetails
             )
@@ -8416,12 +8435,21 @@ class MainActivity : ComponentActivity() {
         teacher: String,
         weeks: String,
         fallbackWeek: Int
-    ) {
+    ): Boolean {
+        val trimmedName = name.trim()
+        if (trimmedName.isBlank()) {
+            showLiquidToast(
+                message = "请输入课程信息",
+                visual = LiquidToastVisual.ERROR,
+                durationMillis = 2_200L
+            )
+            return false
+        }
         val course = Course(
             day = day,
             startSlot = startSlot,
             slotCount = slotCount.coerceIn(1, 10 - startSlot),
-            name = name.trim().ifBlank { "未命名课程" },
+            name = trimmedName,
             room = normalizeClassroomName(room),
             teacher = teacher.trim(),
             background = COURSE_COLORS.first(),
@@ -8432,6 +8460,7 @@ class MainActivity : ComponentActivity() {
         val customCourses = recolorCourses(loadCustomCourseCache() + course)
         saveCustomCourseCache(customCourses)
         scheduleGrid?.setCourses(loadCourseCache())
+        return true
     }
 
     private fun updateCourseCache(

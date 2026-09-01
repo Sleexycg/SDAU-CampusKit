@@ -360,7 +360,7 @@ private fun LiquidCourseDialog(
                         style = TextStyle(contentColor, 20.sp, FontWeight.SemiBold)
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (!editing && canEdit) {
                         CourseLiquidIconButton(
                             backdrop = backdrop,
@@ -652,7 +652,11 @@ private fun CourseLiquidIconButton(
                         shape = CircleShape
                     )
                 } else {
-                    Modifier
+                    Modifier.border(
+                        width = 1.dp,
+                        color = Color.White.copy(alpha = 0.82f),
+                        shape = CircleShape
+                    )
                 }
             )
             .clip(CircleShape)
