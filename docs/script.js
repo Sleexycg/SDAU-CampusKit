@@ -70,11 +70,11 @@
           if (characterIndex === 0) {
             deleting = false;
             lineIndex = (lineIndex + 1) % typewriterLines.length;
-            typewriterTimer = window.setTimeout(advanceTypewriter, 48);
+            typewriterTimer = window.setTimeout(advanceTypewriter, 180);
             return;
           }
 
-          typewriterTimer = window.setTimeout(advanceTypewriter, 38);
+          typewriterTimer = window.setTimeout(advanceTypewriter, 58);
           return;
         }
 
@@ -83,11 +83,11 @@
 
         if (characterIndex === Array.from(typewriterLines[lineIndex]).length) {
           deleting = true;
-          typewriterTimer = window.setTimeout(advanceTypewriter, 680);
+          typewriterTimer = window.setTimeout(advanceTypewriter, 1500);
           return;
         }
 
-        typewriterTimer = window.setTimeout(advanceTypewriter, 78);
+          typewriterTimer = window.setTimeout(advanceTypewriter, 105);
       };
 
       typewriterTimer = window.setTimeout(advanceTypewriter, 1100);
@@ -120,6 +120,46 @@
     parallaxStage.addEventListener('pointermove', updateParallax, { passive: true });
     parallaxStage.addEventListener('pointerleave', resetParallax);
   }
+
+  const heroDevices = [...document.querySelectorAll('[data-hero-device]')];
+  const heroPositions = {
+    left: { left: '10%', right: 'auto', transform: 'translate3d(0, 68px, -40px) rotate(-7deg) scale(.92)', zIndex: '1' },
+    center: { left: '50%', right: 'auto', transform: 'translateX(-50%)', zIndex: '3' },
+    // Keep a concrete left offset so the right card interpolates smoothly.
+    right: { left: '65%', right: 'auto', transform: 'translate3d(0, 68px, -40px) rotate(7deg) scale(.92)', zIndex: '2' },
+  };
+
+  heroDevices.forEach((device) => {
+    device.dataset.heroPosition = device.classList.contains('hero-device--center') ? 'center'
+      : device.classList.contains('hero-device--right') ? 'right' : 'left';
+  });
+
+  const focusHeroDevice = (device) => {
+    if (!device || heroDevices.length < 3) return;
+    const clickedPosition = device.dataset.heroPosition;
+    if (clickedPosition === 'center') return;
+    const centerDevice = heroDevices.find((item) => item.dataset.heroPosition === 'center');
+    if (!centerDevice) return;
+    parallaxStage?.classList.add('hero-deck-focused');
+    [[device, 'center'], [centerDevice, clickedPosition]].forEach(([item, position]) => {
+      const values = heroPositions[position];
+      Object.entries(values).forEach(([property, value]) => {
+        item.style[property] = value;
+      });
+      item.dataset.heroPosition = position;
+      item.classList.toggle('is-focused', position === 'center');
+    });
+  };
+
+  heroDevices.forEach((device) => {
+    device.addEventListener('click', () => focusHeroDevice(device));
+    device.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        focusHeroDevice(device);
+      }
+    });
+  });
 
   const updatePageChrome = () => {
     const scrollTop = window.scrollY;
@@ -186,8 +226,8 @@
 
   const screenImage = document.querySelector('[data-screen-image]');
   const deviceShell = document.querySelector('[data-device-shell]');
-  const screenTitle = document.querySelector('[data-screen-title]');
-  const screenNumber = document.querySelector('[data-screen-number]');
+  const screenTitle = null;
+  const screenNumber = null;
   const screenDescription = document.querySelector('[data-screen-description]');
   const tabs = [...document.querySelectorAll('[data-shot]')];
 

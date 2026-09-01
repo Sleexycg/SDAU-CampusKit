@@ -357,6 +357,12 @@ img {
   box-shadow: 0 0 0 4px rgba(18, 103, 237, .1);
 }
 
+.hero-copy .eyebrow {
+  font-family: "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-weight: 650;
+  letter-spacing: .08em;
+}
+
 .hero h1 {
   margin: 28px 0 26px;
   font-size: clamp(44px, 6.1vw, 84px);
@@ -2002,8 +2008,9 @@ img {
 
 .hero-device--right {
   z-index: 2;
-  right: 10%;
-  transform: translate3d(0, 68px, -24px) rotate(7deg) scale(.92);
+  left: 65%;
+  right: auto;
+  transform: translate3d(0, 68px, -40px) rotate(7deg) scale(.92);
 }
 
 .hero-device-deck:hover .hero-device--left {
@@ -2011,7 +2018,7 @@ img {
 }
 
 .hero-device-deck:hover .hero-device--right {
-  transform: translate3d(14px, 48px, -10px) rotate(8deg) scale(.95);
+  transform: translate3d(14px, 48px, -20px) rotate(8deg) scale(.95);
 }
 
 .hero-device-deck:hover .hero-device--center {
@@ -2100,7 +2107,7 @@ img {
 }
 
 .theme-preview__phone {
-  transition: transform 480ms var(--ease), opacity 240ms ease;
+  transition: transform 560ms var(--ease), left 560ms var(--ease), right 560ms var(--ease), opacity 240ms ease;
 }
 
 .utility-card--detail {
@@ -2291,7 +2298,7 @@ img {
   }
 
   .hero-device--left { left: 3%; }
-  .hero-device--right { right: 3%; }
+  .hero-device--right { left: 52%; right: auto; }
 
   .theme-preview {
     height: 620px;
@@ -2343,9 +2350,10 @@ img {
   }
 
   .hero-device--right {
-    right: -18%;
+    left: 60%;
+    right: auto;
     opacity: .58;
-    transform: translate3d(0, 54px, -24px) rotate(8deg) scale(.88);
+    transform: translate3d(0, 54px, -40px) rotate(8deg) scale(.88);
   }
 
   .hero-device figcaption {
@@ -2455,7 +2463,7 @@ img {
 }
 
 .hero-device-deck:hover .hero-device--right {
-  transform: translate3d(10px, 68px, -10px) rotate(8deg) scale(.94);
+  transform: translate3d(10px, 68px, -20px) rotate(8deg) scale(.94);
 }
 
 .hero-device-deck:hover .hero-device--center {
@@ -3286,7 +3294,9 @@ img {
   display: block;
   font-size: clamp(42px, 5.2vw, 60px);
   line-height: 1.12;
+  height: 1.12em;
   min-height: 1.12em;
+  overflow: visible;
 }
 
 .hero-title-static {
@@ -3297,12 +3307,37 @@ img {
   display: inline-flex;
   vertical-align: baseline;
   margin-left: 0;
+  height: 1.15em;
+  min-height: 1.15em;
   white-space: nowrap;
 }
 
 .hero h1 .hero-typewriter-line em {
   color: var(--type-color, #1769e8) !important;
   -webkit-text-fill-color: var(--type-color, #1769e8) !important;
+}
+
+.hero-device[data-hero-device] {
+  cursor: pointer;
+  transition: filter 260ms ease, transform 560ms var(--ease), left 560ms var(--ease), right 560ms var(--ease);
+}
+
+.hero-device[data-hero-device]:hover {
+  filter: brightness(1.03) saturate(1.04);
+}
+
+.hero-device[data-hero-device]:focus-visible {
+  outline: 2px solid rgba(18, 103, 237, .65);
+  outline-offset: 8px;
+  border-radius: 24px;
+}
+
+.hero-device[data-hero-device].is-focused {
+  filter: brightness(1.04) saturate(1.06);
+}
+
+.hero-device-deck.hero-deck-focused .hero-device:not(.is-focused) {
+  filter: saturate(.9) brightness(.98);
 }
 
 .device-nav-hotspots {
