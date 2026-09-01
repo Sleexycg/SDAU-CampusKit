@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" role="img" aria-label="WeSDAU课程表应用图标">
+  <path fill="#3159D9" d="M0 0h108v108H0z"/>
+  <path fill="#FFF" d="M28 29h52a6 6 0 0 1 6 6v45a6 6 0 0 1-6 6H28a6 6 0 0 1-6-6V35a6 6 0 0 1 6-6zm-6 14h64v8H22z"/>
+  <path fill="#B9C7FF" d="M37 22h6v14h-6zm28 0h6v14h-6zM32 59h12v10H32zm16 0h12v10H48zm16 0h12v10H64zM32 73h12v7H32zm16 0h12v7H48z"/>
+</svg>

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#f4f7fb" />
+  <meta name="description" content="WeSDAU 课程表——面向山东农业大学学生的 Android 校园助手，集中查看课表、考试、成绩与空教室。" />
+  <title>WeSDAU 课程表｜让校园安排一目了然</title>
+  <link rel="icon" type="image/svg+xml" href="./images/app-logo.svg" />
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="./script.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <header class="site-header" data-header>
+    <div class="scroll-progress" data-progress aria-hidden="true"></div>
+    <div class="nav-shell">
+      <a class="brand" href="#top" aria-label="WeSDAU 课程表首页">
+        <img class="brand-logo" src="./images/app-logo.svg" alt="" width="34" height="34" />
+        <span class="brand-name">WeSDAU<span>课程表</span></span>
+      </a>
+
+      <nav class="desktop-nav" aria-label="主导航">
+        <a href="#features">核心功能</a>
+        <a href="#screens">实机界面</a>
+        <a href="#design">设计细节</a>
+        <a href="#updates">更新日志</a>
+        <a href="#faq">常见问题</a>
+      </nav>
+
+      <a class="nav-download" href="./downloads/WeSDAU-v0.3.8-beta.apk" download>
+        <span>下载 Android 版</span>
+      </a>
+      <button class="menu-button" type="button" aria-label="打开导航" aria-expanded="false" data-menu-button>
+        <span></span><span></span>
+      </button>
+    </div>
+    <nav class="mobile-nav" aria-label="移动端导航" data-mobile-nav>
+      <a href="#features">核心功能</a>
+      <a href="#screens">实机界面</a>
+      <a href="#design">设计细节</a>
+      <a href="#updates">更新日志</a>
+      <a href="#faq">常见问题</a>
+      <a href="./downloads/WeSDAU-v0.3.8-beta.apk" download>下载 WeSDAU课程表</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="hero-glow hero-glow--one" aria-hidden="true"></div>
+      <div class="hero-glow hero-glow--two" aria-hidden="true"></div>
+      <div class="hero-copy reveal">
+        <p class="eyebrow"><span></span> 专为山东农业大学学生打造</p>
+        <h1 aria-label="在山农的每一天，课表一眼看清。">
+          <span class="hero-title-static">让每天的安排更合理，</span>
+          <span class="hero-typewriter-line"><em data-typewriter>课表一眼看清。</em><i class="typewriter-caret" aria-hidden="true"></i></span>
+        </h1>
+        <p class="hero-lead">
+          课表、考试、成绩与空教室，集中在一个轻盈的 Android 应用里。
+          信息来自教务系统，常用内容离线也能随时查看。
+        </p>
+        <div class="hero-actions">
+          <a class="button button--primary" href="./downloads/WeSDAU-v0.3.8-beta.apk" download>
+            下载 WeSDAU课程表
+          </a>
+          <a class="button button--quiet" href="#screens">查看实机界面</a>
+        </div>
+        <div class="hero-meta" aria-label="应用信息">
+          <span>Android 8.0+</span><i></i><span>开源免费</span><i></i><span>简介无广</span><i></i><span>离线可用</span>
+        </div>
+      </div>
+
+      <div class="hero-showcase reveal" data-delay="100">
+        <div class="hero-device-deck" data-parallax-stage>
+          <figure class="hero-device hero-device--left">
+            <img src="./images/screenshot-grades-liquid.png" alt="WeSDAU课程表成绩查询实机界面" width="1289" height="2753" fetchpriority="high" />
+          </figure>
+          <figure class="hero-device hero-device--center">
+            <img src="./images/screenshot-schedule-light.png" alt="WeSDAU课程表周课表实机界面" width="1289" height="2753" fetchpriority="high" />
+          </figure>
+          <figure class="hero-device hero-device--right">
+            <img src="./images/screenshot-rooms-liquid.png" alt="WeSDAU课程表空教室查询实机界面" width="1289" height="2753" fetchpriority="high" />
+          </figure>
+          <span class="hero-orbit hero-orbit--one" aria-hidden="true"></span>
+          <span class="hero-orbit hero-orbit--two" aria-hidden="true"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="intro-section" id="features">
+      <div class="section-shell intro-grid">
+        <div class="section-heading reveal">
+          <p class="section-kicker">ONE APP, ONE CAMPUS DAY</p>
+          <h2 class="intro-title"><span>一天里反复确认的事，</span><span>现在一次看清。</span></h2>
+        </div>
+        <p class="section-intro reveal" data-delay="100">
+          WeSDAU 不试图塞进更多功能，而是把真正高频的校园信息整理得更顺手：
+          登录一次，课程、考场、成绩和空闲教室都在熟悉的位置。
+        </p>
+      </div>
+
+      <div class="section-shell feature-list">
+        <article class="feature-row reveal">
+          <span class="feature-index">01</span>
+          <div><h3>个人与全校课表</h3><p>按周浏览个人课程，也可按学院、年级、专业与班级查询全校课表。</p></div>
+        </article>
+        <article class="feature-row reveal">
+          <span class="feature-index">02</span>
+          <div><h3>考试与成绩</h3><p>汇总考试时间、地点、课程成绩、学分与绩点，学期状态不再散落。</p></div>
+        </article>
+        <article class="feature-row reveal">
+          <span class="feature-index">03</span>
+          <div><h3>空教室查询</h3><p>选择校区、周次、星期与节次，按教学片区快速找到可用空间。</p></div>
+        </article>
+        <article class="feature-row reveal">
+          <span class="feature-index">04</span>
+          <div><h3>提醒、组件与导出</h3><p>课前通知、桌面组件、PNG 与 WakeUp CSV，把课表带到应用之外。</p></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="screens-section" id="screens">
+      <div class="section-shell screen-layout">
+        <div class="screen-copy reveal">
+          <p class="section-kicker section-kicker--light">REAL DEVICE, REAL EXPERIENCE</p>
+          <h2>不是概念图，<br />是你每天真正会用到的界面。</h2>
+          <p class="screen-description" data-screen-description>
+            课程按周铺开，教师、教室与节次保持在同一视线内。春秋与夏季作息会自动切换时间。
+          </p>
+
+          <div class="screen-tabs" role="tablist" aria-label="实机界面选择">
+            <button class="screen-tab is-active" type="button" role="tab" aria-selected="true" data-shot="schedule" data-raw="false" data-src="./images/screenshot-schedule-dark.png" data-alt="WeSDAU课程表深色课表实机截图" data-title="个人课表" data-copy="课程按周铺开，教师、教室与节次保持在同一视线内。深色与浅色外观都为长时间查看而设计。">
+              <span>01</span>个人课表
+            </button>
+            <button class="screen-tab" type="button" role="tab" aria-selected="false" data-shot="exams" data-raw="false" data-src="./images/screenshot-exams-framed.png" data-alt="WeSDAU课程表考试安排实机截图" data-title="考试安排" data-copy="考试周数、星期、节次和教室统一整理，重要考试安排不必再临时翻找。">
+              <span>02</span>考试安排
+            </button>
+            <button class="screen-tab" type="button" role="tab" aria-selected="false" data-shot="grades" data-raw="false" data-src="./images/screenshot-grades-framed.png" data-alt="WeSDAU课程表成绩查询实机截图" data-title="成绩查询" data-copy="平均成绩、平均绩点与学分统计集中呈现，展开课程还能查看更完整的成绩构成。">
+              <span>03</span>成绩查询
+            </button>
+            <button class="screen-tab" type="button" role="tab" aria-selected="false" data-shot="rooms" data-raw="false" data-src="./images/screenshot-rooms-dark.png" data-alt="WeSDAU课程表空教室查询实机截图" data-title="空教室查询" data-copy="按校区和教学片区组织查询结果，空闲教室不再需要在长列表里来回翻找。">
+              <span>04</span>空教室
+            </button>
+          </div>
+          <button class="text-action" type="button" data-open-current>放大查看当前实机图</button>
+        </div>
+
+        <div class="device-stage reveal" data-delay="120">
+          <div class="device-orbit" aria-hidden="true"></div>
+          <div class="device-image-shell" data-device-shell>
+            <img data-screen-image src="./images/screenshot-schedule-dark.png" alt="WeSDAU课程表深色课表实机截图" width="1289" height="2753" />
+          </div>
+          <div class="device-label"><span data-screen-number>01</span><b data-screen-title>个人课表</b><small>WeSDAU课程表 / 实机界面</small></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="design-section" id="design">
+      <div class="section-shell design-grid">
+        <div class="design-visual reveal">
+          <div class="theme-preview" aria-label="WeSDAU课程表浅色与深色界面对比">
+            <figure class="theme-preview__phone theme-preview__phone--dark">
+              <img src="./images/screenshot-schedule-dark.png" alt="WeSDAU课程表深色课表界面" width="1289" height="2753" loading="lazy" />
+            </figure>
+            <figure class="theme-preview__phone theme-preview__phone--light">
+              <img src="./images/screenshot-schedule-light.png" alt="WeSDAU课程表浅色课表界面" width="1289" height="2753" loading="lazy" />
+            </figure>
+          </div>
+        </div>
+        <div class="design-copy reveal" data-delay="100">
+          <p class="section-kicker">LIQUID GLASS, WITH A PURPOSE</p>
+          <h2>玻璃感不只是装饰，<br />它会回应你的背景。</h2>
+          <p>
+            底部导航、弹窗、按钮与信息卡片会从当前背景实时取色，叠加模糊、折射和高光。
+            你可以换上自己的壁纸，也可以调整裁切与清晰度，让界面保持个性，同时不牺牲可读性。
+          </p>
+          <dl class="design-facts">
+            <div><dt>实时取色</dt><dd>玻璃组件跟随背景色彩变化</dd></div>
+            <div><dt>自动对比</dt><dd>根据背景亮度调整文字观感</dd></div>
+            <div><dt>跟手交互</dt><dd>导航与切换栏响应滑动与选中</dd></div>
+          </dl>
+        </div>
+      </div>
+    </section>
+
+    <section class="utility-section">
+      <div class="section-shell">
+        <div class="utility-heading reveal">
+          <p class="section-kicker">BEYOND THE APP</p>
+          <h2>需要时，课表也能离开 App。</h2>
+          <p>导出一张能分享的课表，或把下一节课留在桌面。信息跟着你走，不必每次打开应用。</p>
+        </div>
+
+        <div class="utility-grid">
+          <article class="utility-card utility-card--wide reveal">
+            <div class="utility-card-copy"><span>01 / 导出</span><h3>把整周安排保存成一张图</h3><p>个人课表与班级课表可保存为 PNG，也支持生成 WakeUp 可导入的 CSV。</p></div>
+            <div class="export-frame"><img src="./images/export-class-schedule.png" alt="WeSDAU 导出的班级课表" width="2048" height="1152" loading="lazy" /></div>
+          </article>
+          <article class="utility-card reveal" data-delay="80">
+            <div class="utility-card-copy"><span>02 / 组件</span><h3>下一节课，留在桌面</h3><p>详细与紧凑两种布局，按桌面空间自由选择。</p></div>
+            <div class="widget-stage">
+              <img class="widget-wide" src="./images/widget-detailed.png" alt="WeSDAU 详细课程桌面组件" width="500" height="230" loading="lazy" />
+              <img class="widget-compact" src="./images/widget-compact.png" alt="WeSDAU 紧凑课程桌面组件" width="280" height="280" loading="lazy" />
+            </div>
+          </article>
+          <article class="utility-card utility-card--detail reveal" data-delay="120" data-theme-switcher>
+            <div class="utility-card-copy">
+              <span>03 / 明细</span><h3>一门课的成绩，也可以看得更明白</h3><p>总成绩、平时成绩、期末成绩与占比集中呈现，并自然适配深色和浅色背景。</p>
+              <div class="theme-switch theme-switch--compact" role="group" aria-label="成绩明细主题">
+                <button type="button" class="is-active" aria-pressed="true" data-theme-src="./images/screenshot-grade-detail-light.png" data-theme-alt="WeSDAU课程表浅色成绩构成界面">浅色</button>
+                <button type="button" aria-pressed="false" data-theme-src="./images/screenshot-grade-detail-dark.png" data-theme-alt="WeSDAU课程表深色成绩构成界面">深色</button>
+              </div>
+            </div>
+            <div class="grade-detail-preview">
+              <img data-theme-image src="./images/screenshot-grade-detail-light.png" alt="WeSDAU课程表浅色成绩构成界面" width="1006" height="907" loading="lazy" />
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="principles-section">
+      <div class="section-shell principles-grid">
+        <div class="principles-title reveal">
+          <p class="section-kicker section-kicker--light">BUILT FOR THE DAILY ROUTINE</p>
+          <h2>认真处理那些<br />“每天都会遇到”的细节。</h2>
+        </div>
+        <div class="principles-list">
+          <article class="reveal"><span>01</span><h3>断网也能看</h3><p>课程数据保存在本地，短暂的网络波动不会打断查看。</p></article>
+          <article class="reveal"><span>02</span><h3>节假日会避开</h3><p>固定法定节假日不显示课程，让周视图更贴近日常。</p></article>
+          <article class="reveal"><span>03</span><h3>提醒不过度</h3><p>只安排下一次课程提醒，触发后再续排，减少后台占用。</p></article>
+          <article class="reveal"><span>04</span><h3>课程可以补充</h3><p>支持修改课程信息，也可以加入自己的临时日程。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section class="updates-section" id="updates">
+      <div class="section-shell updates-grid">
+        <div class="updates-heading reveal">
+          <p class="section-kicker">WHAT'S NEW</p>
+          <h2>持续更新，<br />但不打扰日常。</h2>
+          <p>每次更新都围绕真实的校园使用场景展开。</p>
+          <div class="updates-links">
+            <a href="https://github.com/Sleexycg/WeSDAU/releases" target="_blank" rel="noopener noreferrer">查看更新日志</a>
+          </div>
+        </div>
+        <div class="update-list">
+          <article class="update-entry reveal">
+            <div class="update-meta"><span>v0.3.8</span><i>最新</i></div>
+            <div><h3>深色外观与全新课表体验</h3><p>课表、成绩与空教室页面完善深色外观；课程卡片层级与颜色对比更清楚，在夜间也能舒适查看。</p></div>
+          </article>
+          <article class="update-entry reveal">
+            <div class="update-meta"><span>v0.3.7</span></div>
+            <div><h3>LiquidGlass 与个性化背景</h3><p>玻璃组件会从当前背景实时取色，并加入模糊、折射与高光；背景裁切和清晰度也可以自由调整。</p></div>
+          </article>
+          <article class="update-entry reveal">
+            <div class="update-meta"><span>v0.3.6</span></div>
+            <div><h3>考试、成绩和空教室集中查询</h3><p>把散落在教务系统中的高频信息带进同一个应用，并补充本地缓存、课程提醒、桌面组件和导出能力。</p></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="faq-section" id="faq">
+      <div class="section-shell faq-grid">
+        <div class="faq-heading reveal">
+          <p class="section-kicker">BEFORE YOU START</p>
+          <h2>开始使用前，<br />你可能想知道。</h2>
+          <p>还有问题？可以前往 <a href="https://github.com/Sleexycg/WeSDAU" target="_blank" rel="noopener noreferrer">GitHub 仓库</a> 查看说明或提交反馈。</p>
+        </div>
+        <div class="faq-list">
+          <details class="faq-item reveal" open>
+            <summary>WeSDAU 支持哪些设备？<span></span></summary>
+            <p>目前提供 Android 客户端，最低支持 Android 8.0（API 26）。</p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>没有网络时还能查看课表吗？<span></span></summary>
+            <p>可以。已同步的课程数据会缓存在本地；考试、成绩和空教室等实时查询在教务系统或网络不可用时可能暂时受限。</p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>可以查看其他班级的课表吗？<span></span></summary>
+            <p>可以。在登录页切换到“全校课表”，再按学院、年级、专业和班级逐级选择即可。</p>
+          </details>
+          <details class="faq-item reveal">
+            <summary>截图里的背景是固定的吗？<span></span></summary>
+            <p>不是。应用支持选择自定义背景，并可调整裁切与清晰度；LiquidGlass 组件会跟随当前背景实时变化。</p>
+          </details>
+        </div>
+      </div>
+    </section>
+
+    <section class="download-section" id="download">
+      <div class="download-glow" aria-hidden="true"></div>
+      <div class="section-shell download-inner reveal">
+        <img class="download-logo" src="./images/app-logo.svg" alt="WeSDAU课程表图标" width="66" height="66" />
+        <p class="section-kicker">READY FOR THE NEW SEMESTER</p>
+        <h2>让每天的安排更清楚一点</h2>
+        <p>下载 WeSDAU课程表，在 Android 设备上开始使用。</p>
+        <div class="download-actions">
+          <a class="button button--primary" href="./downloads/WeSDAU-v0.3.8-beta.apk" download>下载 WeSDAU课程表</a>
+          <span>APK · 2.1 MB · Android 8.0+</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="section-shell footer-grid">
+      <div class="footer-brand">
+        <a class="brand brand--footer" href="#top">
+          <img class="brand-logo" src="./images/app-logo.svg" alt="" width="34" height="34" />
+          <span class="brand-name">WeSDAU<span>课程表</span></span>
+        </a>
+        <p>为山东农业大学学子打造的一站式校园助手。</p>
+      </div>
+      <div class="footer-columns">
+        <nav class="footer-column" aria-label="产品导航">
+          <strong>产品</strong>
+          <a href="#features">核心功能</a><a href="#screens">实机界面</a><a href="#design">设计细节</a><a href="#updates">更新日志</a>
+        </nav>
+        <nav class="footer-column" aria-label="说明导航">
+          <strong>说明</strong>
+          <a href="#faq">常见问题</a><a href="#download">下载安装</a><a href="#features">数据说明</a>
+        </nav>
+        <nav class="footer-column" aria-label="更多导航">
+          <strong>更多</strong>
+          <a href="https://github.com/Sleexycg/WeSDAU" target="_blank" rel="noopener noreferrer">GitHub</a>
+        </nav>
+      </div>
+      <p class="footer-copy">© <span data-year>2026</span> WeSDAU<br /><span>课程、考试、成绩和教室信息以学校教务系统数据为准。</span></p>
+    </div>
+  </footer>
+
+  <dialog class="image-dialog" data-image-dialog aria-label="实机截图预览">
+    <button type="button" class="dialog-close" aria-label="关闭截图预览" data-dialog-close>×</button>
+    <img data-dialog-image src="./images/screenshot-schedule-dark.png" alt="WeSDAU课程表实机截图放大预览" />
+  </dialog>
+</body>
+</html>
