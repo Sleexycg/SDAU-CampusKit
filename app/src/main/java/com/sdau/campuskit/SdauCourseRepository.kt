@@ -543,7 +543,7 @@ class SdauCourseRepository {
                     examWeek = normalizeExamNumber(jsonText(row, "kszc")),
                     examWeekday = normalizeExamNumber(jsonText(row, "ksxq")),
                     examSessions = normalizeExamSessions(jsonText(row, "ksjc")),
-                    classroom = jsonText(row, "js_mc").ifBlank { "-" }
+                    classroom = normalizeClassroomName(jsonText(row, "js_mc")).ifBlank { "-" }
                 ))
             }
         }.distinct()
@@ -607,7 +607,7 @@ class SdauCourseRepository {
                 val cellIndex = if (targetCellIndex < row.length()) targetCellIndex else 1
                 val occupied = jsonCellText(row.opt(cellIndex))
                 if (occupied.isNotEmpty()) continue
-                val roomName = jsonCellText(row.opt(0))
+                val roomName = normalizeClassroomName(jsonCellText(row.opt(0)))
                 if (roomName.isNotEmpty()) add(roomName)
             }
         }.distinct()
@@ -801,7 +801,9 @@ class SdauCourseRepository {
             val courseCode = clean(item.optString("kch"))
             val roomLines = splitLines(item.optString("skdd"))
             parseMeetings(item.optString("sksj")).forEachIndexed { meetingIndex, meeting ->
-                val room = roomLines.getOrNull(meetingIndex) ?: roomLines.firstOrNull().orEmpty()
+                val room = normalizeClassroomName(
+                    roomLines.getOrNull(meetingIndex) ?: roomLines.firstOrNull().orEmpty()
+                )
                 result += RemoteCourse(meeting.day, meeting.startSlot, meeting.slotCount, name, room, teacher, meeting.weeks, courseCode)
             }
         }
@@ -873,7 +875,9 @@ class SdauCourseRepository {
         val grade = normalizeGrade(jsonText(row, "ksnd", "grade", "nj"))
         val major = clean(jsonText(row, "zymc", "major", "zy"))
         val className = clean(jsonText(row, "bj", "skbj", "className", "bjmc"))
-        val room = cleanLocation(jsonText(row, "skdd", "jxdd", "room", "location", "jsmc"))
+        val room = normalizeClassroomName(
+            cleanLocation(jsonText(row, "skdd", "jxdd", "room", "location", "jsmc"))
+        )
         val teacher = clean(jsonText(row, "xm", "jsxm", "teacher", "js"))
             .replace(Regex("\\s*\\[[^]]*\\]"), "")
         val code = clean(jsonText(row, "kch", "courseCode", "kcdm"))

@@ -306,7 +306,7 @@ class CourseWidgetProvider : AppWidgetProvider() {
                             startSlot = row.optInt("startSlot", -1),
                             slotCount = row.optInt("slotCount", 0),
                             name = row.optString("name"),
-                            room = row.optString("room"),
+                            room = normalizeClassroomName(row.optString("room")),
                             teacher = row.optString("teacher"),
                             weeks = row.optString("weeks"),
                             background = row.optInt("background", FALLBACK_COLORS[index % FALLBACK_COLORS.size])

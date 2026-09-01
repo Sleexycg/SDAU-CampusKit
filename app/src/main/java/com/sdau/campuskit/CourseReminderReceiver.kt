@@ -155,7 +155,14 @@ object CourseReminderScheduler {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val alarm = applicationContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.triggerAt, pending)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !alarm.canScheduleExactAlarms()) {
+            preferences.edit().putBoolean(KEY_PUSH_ENABLED, false).apply()
+            cancel(applicationContext)
+            return
+        }
+        runCatching {
+            alarm.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, next.triggerAt, pending)
+        }
     }
 
     fun cancel(context: Context) {
@@ -262,7 +269,7 @@ object CourseReminderScheduler {
                         startSlot = row.optInt("startSlot", -1),
                         slotCount = row.optInt("slotCount", 0),
                         name = row.optString("name"),
-                        room = row.optString("room"),
+                        room = normalizeClassroomName(row.optString("room")),
                         weeks = row.optString("weeks")
                     )
                 }

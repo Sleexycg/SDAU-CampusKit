@@ -1,6 +1,7 @@
 package com.sdau.campuskit
 
 import android.Manifest
+import android.app.AlarmManager
 import android.app.DownloadManager
 import android.content.Context
 import android.content.ContentValues
@@ -33,7 +34,6 @@ import android.animation.ValueAnimator
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
-import android.os.PowerManager
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -298,6 +298,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     private var pendingPushEnable = false
+    private var pendingExactAlarmEnable = false
     private var bottomNavigation: CampusLiquidBottomTabsView? = null
     private var scoresLoading = false
     private var scoreExporting = false
@@ -2388,7 +2389,9 @@ class MainActivity : ComponentActivity() {
                 ("5N" to Color.rgb(103, 151, 214)) to mutableListOf<String>(),
                 ("5S" to Color.rgb(92, 181, 164)) to mutableListOf(),
                 ("文理大楼" to Color.rgb(139, 132, 199)) to mutableListOf(),
+                ("9号楼" to Color.rgb(219, 132, 116)) to mutableListOf(),
                 ("12号楼" to Color.rgb(220, 156, 96)) to mutableListOf(),
+                ("14号楼" to Color.rgb(205, 145, 92)) to mutableListOf(),
                 ("其他教室" to Color.rgb(116, 137, 174)) to mutableListOf()
             )
             "泮河校区" -> linkedMapOf(
@@ -2409,7 +2412,9 @@ class MainActivity : ComponentActivity() {
                     key.startsWith("5N") -> "5N"
                     key.startsWith("5S") -> "5S"
                     key.contains("文理大楼") -> "文理大楼"
-                    key.contains("12号楼") -> "12号楼"
+                    key.startsWith("9#") -> "9号楼"
+                    key.startsWith("12#") || key.contains("12号楼") -> "12号楼"
+                    key.startsWith("14#") -> "14号楼"
                     else -> "其他教室"
                 }
                 "泮河校区" -> when {
@@ -2546,7 +2551,10 @@ class MainActivity : ComponentActivity() {
                 "文理大楼503", "北校12号楼310", "线上教学"
             )
         }
-        return RemoteEmptyRoomResult(selectedTerm(), week, campus, weekday, sectionCode, rooms)
+        return RemoteEmptyRoomResult(
+            selectedTerm(), week, campus, weekday, sectionCode,
+            rooms.map(::normalizeClassroomName)
+        )
     }
 
     private fun showEmptyRoomFilterPicker(
@@ -2669,10 +2677,15 @@ class MainActivity : ComponentActivity() {
             .uppercase(Locale.ROOT)
         return when {
             normalizedRoom.startsWith("22#") -> "西北片区"
-            normalizedRoom.startsWith("北校12号楼") ||
+            normalizedRoom.startsWith("9#") ||
+                normalizedRoom.startsWith("12#") ||
+                normalizedRoom.startsWith("14#") ||
+                normalizedRoom.startsWith("北校12号楼") ||
                 normalizedRoom.startsWith("5N") ||
                 normalizedRoom.startsWith("5S") ||
                 normalizedRoom.startsWith("文理大楼") ||
+                normalizedRoom.startsWith("学实楼") ||
+                normalizedRoom.startsWith("音乐楼") ||
                 normalizedRoom.startsWith("北校文理大楼") -> "岱宗校区"
             normalizedRoom.startsWith("19#") ||
                 normalizedRoom.startsWith("S") ||
@@ -5180,6 +5193,26 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
             return
         }
+        continueEnablingPushNotifications()
+    }
+
+    private fun continueEnablingPushNotifications() {
+        if (!canScheduleExactCourseReminders()) {
+            pushEnabled = false
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_PUSH_ENABLED, false)
+                .apply()
+            cancelSystemCourseReminder()
+            pendingExactAlarmEnable = true
+            showLiquidToast(
+                message = "请授予“闹钟和提醒”权限",
+                visual = LiquidToastVisual.BELL_OFF,
+                durationMillis = 2_400L
+            )
+            requestExactAlarmAccess()
+            return
+        }
         enablePushNotifications()
     }
 
@@ -5191,25 +5224,31 @@ class MainActivity : ComponentActivity() {
             visual = LiquidToastVisual.BELL_ON,
             durationMillis = 1_800L
         )
-        requestBatteryOptimizationExemption()
         schedulePushNotifications()
         nextCourseForNow()?.let { course -> CourseNotification.show(this, course.name, course.room, courseTimeLabel(course)) }
     }
 
-    private fun requestBatteryOptimizationExemption() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
-        val power = getSystemService(Context.POWER_SERVICE) as PowerManager
-        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-        if (power.isIgnoringBatteryOptimizations(packageName)) {
-            preferences.edit().putBoolean(KEY_BATTERY_PROMPTED, true).apply()
-            return
-        }
-        if (preferences.getBoolean(KEY_BATTERY_PROMPTED, false)) return
-        preferences.edit().putBoolean(KEY_BATTERY_PROMPTED, true).apply()
+    private fun canScheduleExactCourseReminders(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+        return (getSystemService(Context.ALARM_SERVICE) as AlarmManager).canScheduleExactAlarms()
+    }
+
+    private fun requestExactAlarmAccess() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         try {
-            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,
+                    Uri.parse("package:$packageName")
+                )
+            )
         } catch (_: ActivityNotFoundException) {
-            // Some OEMs do not expose the standard battery optimization screen.
+            pendingExactAlarmEnable = false
+            showLiquidToast(
+                message = "无法打开闹钟权限设置，课程提醒未开启",
+                visual = LiquidToastVisual.BELL_OFF,
+                durationMillis = 2_800L
+            )
         }
     }
 
@@ -5251,7 +5290,7 @@ class MainActivity : ComponentActivity() {
         if (requestCode == NOTIFICATION_PERMISSION_REQUEST && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             if (pendingPushEnable) {
                 pendingPushEnable = false
-                enablePushNotifications()
+                continueEnablingPushNotifications()
                 actionMenuOverlay?.setPushState(pushEnabled)
                 return
             }
@@ -5294,19 +5333,19 @@ class MainActivity : ComponentActivity() {
     private fun sampleCourses() = listOf(
         Course(0, 0, 2, "高等数学 A", "5N201", "张老师", Color.rgb(232, 126, 158), Color.WHITE),
         Course(0, 2, 2, "人工智能通识基础", "5S416", "高老师", Color.rgb(231, 142, 168), Color.WHITE),
-        Course(0, 4, 2, "大学英语", "北校12号楼310", "王老师", Color.rgb(230, 157, 126), Color.WHITE),
+        Course(0, 4, 2, "大学英语", "12#310", "王老师", Color.rgb(230, 157, 126), Color.WHITE),
         Course(1, 0, 2, "大学化学", "E308", "陈老师", Color.rgb(181, 145, 226), Color.WHITE),
         Course(1, 2, 2, "程序设计基础", "N104", "陈老师", Color.rgb(103, 205, 191), Color.WHITE),
         Course(1, 6, 2, "体育", "S514", "孟老师", Color.rgb(109, 153, 222), Color.WHITE),
         Course(2, 0, 2, "计算机导论", "图信楼413", "李老师", Color.rgb(182, 147, 224), Color.WHITE),
         Course(2, 2, 2, "大学英语 B1", "图信楼大厅A区", "曹老师", Color.rgb(100, 158, 206), Color.WHITE),
-        Course(2, 4, 2, "思想道德与法治", "北校文理大楼503", "赵老师", Color.rgb(91, 167, 205), Color.WHITE),
+        Course(2, 4, 2, "思想道德与法治", "文理大楼503", "赵老师", Color.rgb(91, 167, 205), Color.WHITE),
         Course(3, 0, 2, "习近平新时代中国特色社会主义思想概论", "19#408", "周老师", Color.rgb(235, 177, 101), Color.WHITE),
-        Course(3, 2, 2, "大学物理", "南校区体育北足球场", "周老师", Color.rgb(236, 132, 107), Color.WHITE),
+        Course(3, 2, 2, "大学物理", "北操足球场", "周老师", Color.rgb(236, 132, 107), Color.WHITE),
         Course(3, 6, 2, "新时代实践教育", "22#402", "李老师", Color.rgb(230, 128, 160), Color.WHITE),
         Course(4, 0, 2, "数据结构", "W205", "高老师", Color.rgb(100, 201, 187), Color.WHITE),
-        Course(4, 2, 2, "高等数学 A1", "西北区体育N", "张老师", Color.rgb(97, 202, 188), Color.WHITE),
-        Course(4, 4, 2, "线性代数", "南校区实验楼C楼C241", "张老师", Color.rgb(182, 147, 224), Color.WHITE)
+        Course(4, 2, 2, "高等数学 A1", "西北片区体育场", "张老师", Color.rgb(97, 202, 188), Color.WHITE),
+        Course(4, 4, 2, "线性代数", "实验楼C241", "张老师", Color.rgb(182, 147, 224), Color.WHITE)
     )
 
     private fun sampleScoreResult(term: String): RemoteScoreResult {
@@ -5726,7 +5765,7 @@ class MainActivity : ComponentActivity() {
                                     cursor.getInt(1),
                                     cursor.getInt(2),
                                     cursor.getString(3),
-                                    cursor.getString(4),
+                                    normalizeClassroomName(cursor.getString(4)),
                                     cursor.getString(5),
                                     cursor.getString(6),
                                     cursor.getString(7)
@@ -6042,7 +6081,7 @@ class MainActivity : ComponentActivity() {
                     val item = array.getJSONObject(index)
                     add(Course(
                         item.getInt("day"), item.getInt("startSlot"), item.getInt("slotCount"),
-                        item.getString("name"), item.getString("room"), item.getString("teacher"),
+                        item.getString("name"), normalizeClassroomName(item.getString("room")), item.getString("teacher"),
                         item.getInt("background"), item.getInt("foreground"), item.optString("weeks", ""),
                         isCustom = isCustom
                     ))
@@ -6114,7 +6153,7 @@ class MainActivity : ComponentActivity() {
                             examWeek = row.optString("examWeek"),
                             examWeekday = row.optString("examWeekday"),
                             examSessions = row.optString("examSessions"),
-                            classroom = row.optString("classroom", "-")
+                            classroom = normalizeClassroomName(row.optString("classroom", "-") )
                         ))
                     }
                 }
@@ -8383,7 +8422,7 @@ class MainActivity : ComponentActivity() {
             startSlot = startSlot,
             slotCount = slotCount.coerceIn(1, 10 - startSlot),
             name = name.trim().ifBlank { "未命名课程" },
-            room = room.trim(),
+            room = normalizeClassroomName(room),
             teacher = teacher.trim(),
             background = COURSE_COLORS.first(),
             foreground = Color.WHITE,
@@ -8408,7 +8447,7 @@ class MainActivity : ComponentActivity() {
             if (sameCourseRecord(current, original)) {
                 current.copy(
                     name = name,
-                    room = room,
+                    room = normalizeClassroomName(room),
                     teacher = teacher,
                     weeks = weeks,
                     slotCount = if (original.isCustom) {
@@ -8481,12 +8520,41 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         hideSystemNavigationBar()
         val automaticMode = ScheduleTimePolicy.currentMode()
-        if (automaticMode == scheduleMode) return
-        scheduleMode = automaticMode
-        scheduleGrid?.setScheduleMode(automaticMode)
-        CourseWidgetProvider.updateAll(this)
+        if (automaticMode != scheduleMode) {
+            scheduleMode = automaticMode
+            scheduleGrid?.setScheduleMode(automaticMode)
+            CourseWidgetProvider.updateAll(this)
+        }
+        if (pendingExactAlarmEnable) {
+            pendingExactAlarmEnable = false
+            if (canScheduleExactCourseReminders()) {
+                enablePushNotifications()
+            } else {
+                pushEnabled = false
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(KEY_PUSH_ENABLED, false)
+                    .apply()
+                cancelSystemCourseReminder()
+                showLiquidToast(
+                    message = "未获得闹钟权限，课程提醒无法开启",
+                    visual = LiquidToastVisual.BELL_OFF,
+                    durationMillis = 2_800L
+                )
+            }
+            actionMenuOverlay?.setPushState(pushEnabled)
+        } else if (pushEnabled && !canScheduleExactCourseReminders()) {
+            pushEnabled = false
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_PUSH_ENABLED, false)
+                .apply()
+            cancelSystemCourseReminder()
+            actionMenuOverlay?.setPushState(false)
+        }
         if (
             pushEnabled &&
+            canScheduleExactCourseReminders() &&
             (
                 Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                     checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
@@ -8569,7 +8637,6 @@ class MainActivity : ComponentActivity() {
         private const val KEY_COLOR_MAP = "course_color_map"
         private const val KEY_DARK_COLOR_MAP = "dark_course_color_map"
         private const val KEY_PUSH_ENABLED = "push_enabled"
-        private const val KEY_BATTERY_PROMPTED = "battery_prompted"
         private const val KEY_UPDATE_STARTED_CODE = "update_started_code"
         private const val KEY_CUSTOM_BACKGROUND = "custom_background"
         private const val KEY_CUSTOM_BACKGROUND_CLARITY = "custom_background_clarity"
