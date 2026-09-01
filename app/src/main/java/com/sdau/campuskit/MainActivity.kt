@@ -8045,21 +8045,39 @@ class MainActivity : ComponentActivity() {
             paint.textSize = size
             paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             val result = mutableListOf<String>()
-            fun appendWrapped(raw: String, characterLimit: Int? = null) {
+            fun isHanCharacter(char: Char): Boolean =
+                char in '\u3400'..'\u4DBF' ||
+                    char in '\u4E00'..'\u9FFF' ||
+                    char in '\uF900'..'\uFAFF'
+
+            fun appendWrapped(raw: String, hanCharacterLimit: Int? = null) {
                 raw.split('\n').forEach { paragraph ->
                     var remaining = paragraph
                     if (remaining.isEmpty()) result.add("")
                     while (remaining.isNotEmpty()) {
                         val measuredCount = paint.breakText(remaining, true, maxWidth, null)
-                        val count = characterLimit?.let { minOf(measuredCount, it) } ?: measuredCount
+                        val count = if (hanCharacterLimit == null) {
+                            measuredCount
+                        } else {
+                            var acceptedCount = 0
+                            var hanCount = 0
+                            while (acceptedCount < measuredCount) {
+                                if (isHanCharacter(remaining[acceptedCount])) {
+                                    if (hanCount >= hanCharacterLimit) break
+                                    hanCount++
+                                }
+                                acceptedCount++
+                            }
+                            acceptedCount
+                        }
                         if (count <= 0) break
                         result.add(remaining.substring(0, count))
                         remaining = remaining.substring(count)
                     }
                 }
             }
-            // 课程名最多三个字符一行，避免窄列里四个汉字紧贴卡片边缘。
-            appendWrapped(course.name, characterLimit = 3)
+            // 汉字每行最多三个；英文、数字和符号按卡片实际宽度尽量多排。
+            appendWrapped(course.name, hanCharacterLimit = 3)
             formatRoom(course.room).split('\n').forEach { roomLine ->
                 val compactCode = roomLine.length <= 6 && roomLine.matches(Regex("^@[A-Za-z0-9-]+$"))
                 val completeBuilding = roomLine.matches(Regex("^\\d+号楼$"))
