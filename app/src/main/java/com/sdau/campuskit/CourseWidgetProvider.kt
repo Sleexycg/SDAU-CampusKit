@@ -62,9 +62,6 @@ class CourseWidgetProvider : AppWidgetProvider() {
         private const val KEY_ACCOUNT = "account"
         private const val KEY_TERM = "term"
         private const val KEY_COURSES = "courses_cache"
-        private const val KEY_COURSES_PREFIX = "courses_cache_account"
-        private const val KEY_CUSTOM_COURSES_PREFIX = "custom_courses_cache"
-        private const val OFFICIAL_TERM = "2026-2027-1"
         private val FALLBACK_COLORS = intArrayOf(
             Color.rgb(130, 173, 247), Color.rgb(237, 184, 119),
             Color.rgb(120, 225, 208), Color.rgb(232, 138, 117)
@@ -154,7 +151,9 @@ class CourseWidgetProvider : AppWidgetProvider() {
             val views = RemoteViews(context.packageName, layout)
             val now = Calendar.getInstance()
             val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val term = preferences.getString(KEY_TERM, OFFICIAL_TERM).orEmpty().ifBlank { OFFICIAL_TERM }
+            val term = preferences.getString(KEY_TERM, AcademicTermCalendar.OFFICIAL_TERM)
+                .orEmpty()
+                .ifBlank { AcademicTermCalendar.OFFICIAL_TERM }
             val start = termStartDate(term)
             val week = weekForDate(now, start)
             val courses = loadCourses(context)
@@ -285,7 +284,9 @@ class CourseWidgetProvider : AppWidgetProvider() {
             val preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val courses = mutableListOf<WidgetCourse>()
             val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
-            val term = preferences.getString(KEY_TERM, OFFICIAL_TERM).orEmpty().ifBlank { OFFICIAL_TERM }
+            val term = preferences.getString(KEY_TERM, AcademicTermCalendar.OFFICIAL_TERM)
+                .orEmpty()
+                .ifBlank { AcademicTermCalendar.OFFICIAL_TERM }
             val imported = account.takeIf { it.isNotBlank() }
                 ?.let { preferences.getString(courseCacheKey(it, term), null) }
                 ?: preferences.getString(KEY_COURSES, null)
@@ -314,41 +315,19 @@ class CourseWidgetProvider : AppWidgetProvider() {
             return courses.filter { it.day in 0..6 && it.name.isNotBlank() }
         }
 
-        private fun courseCacheKey(account: String, term: String): String {
-            val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-            val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-            return "${KEY_COURSES_PREFIX}_${safeAccount}_$safeTerm"
-        }
+        private fun courseCacheKey(account: String, term: String): String =
+            CourseCacheKeys.imported(account, term)
 
-        private fun customCourseCacheKey(account: String, term: String): String {
-            val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-            val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-            return "${KEY_CUSTOM_COURSES_PREFIX}_${safeAccount}_$safeTerm"
-        }
+        private fun customCourseCacheKey(account: String, term: String): String =
+            CourseCacheKeys.custom(account, term)
 
-        private fun legacyCustomCourseCacheKey(term: String): String =
-            "${KEY_CUSTOM_COURSES_PREFIX}_${term.replace(Regex("[^A-Za-z0-9_-]"), "_")}"
+        private fun legacyCustomCourseCacheKey(term: String): String = CourseCacheKeys.legacyCustom(term)
 
-        private fun courseVisibleInWeek(course: WidgetCourse, week: Int): Boolean {
-            if (week <= 0) return false
-            val normalized = course.weeks.replace("周", "").replace("—", "-").replace("至", "-")
-            val ranges = Regex("(\\d+)(?:\\s*-\\s*(\\d+))?").findAll(normalized).toList()
-            if (ranges.isEmpty()) return true
-            return ranges.any { match ->
-                val first = match.groupValues[1].toIntOrNull() ?: return@any false
-                val last = match.groupValues[2].toIntOrNull() ?: first
-                week in first.coerceAtLeast(1)..last
-            }
-        }
+        private fun courseVisibleInWeek(course: WidgetCourse, week: Int): Boolean =
+            CourseWeekRule.isVisible(course.weeks, week)
 
-        private fun timeRanges(): Array<Pair<Int, Int>> {
-            val starts = if (ScheduleTimePolicy.currentMode() == ScheduleMode.SPRING) {
-                intArrayOf(480, 535, 600, 655, 840, 895, 960, 1015, 1140, 1195)
-            } else {
-                intArrayOf(480, 535, 600, 655, 870, 925, 990, 1045, 1170, 1225)
-            }
-            return Array(10) { index -> starts[index] to starts[index] + 45 }
-        }
+        private fun timeRanges(): Array<Pair<Int, Int>> =
+            ScheduleTimePolicy.timeRanges(ScheduleTimePolicy.currentMode())
 
         private fun termStartDate(term: String): Calendar = AcademicTermCalendar.startDate(term)
 

@@ -10,6 +10,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -32,9 +35,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.BasicText
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,7 +73,6 @@ import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.shapes.Capsule
 import com.kyant.shapes.RoundedRectangle
-import java.util.Calendar
 import kotlin.math.roundToInt
 
 internal sealed interface TrainingPlanUiState {
@@ -136,7 +139,7 @@ private fun TrainingPlanPage(
     val primary = Color(textPalette.primary)
     val secondary = Color(textPalette.secondary)
     val shadow = trainingPlanTextShadow(textPalette)
-    val scrollState = rememberScrollState()
+    val scrollState = rememberLazyListState()
 
     Box(Modifier.fillMaxSize()) {
         PageAlignedBackdropSource(
@@ -145,40 +148,76 @@ private fun TrainingPlanPage(
             pageBackgroundScrim = pageBackgroundScrim,
             pageGradient = pageGradient
         )
-        Column(
+        LazyColumn(
             Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .verticalScroll(scrollState)
-                .padding(start = 20.dp, top = 7.dp, end = 20.dp, bottom = 38.dp),
+                .statusBarsPadding(),
+            state = scrollState,
+            contentPadding = PaddingValues(start = 20.dp, top = 7.dp, end = 20.dp, bottom = 38.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
-            TrainingPlanHeader(
-                backdrop = backdrop,
-                primary = primary,
-                shadow = shadow,
-                refreshing = state is TrainingPlanUiState.Loading,
-                onBack = onBack,
-                onRefresh = onRefresh
-            )
+            item(key = "training_plan_header") {
+                TrainingPlanHeader(
+                    backdrop = backdrop,
+                    primary = primary,
+                    shadow = shadow,
+                    refreshing = state is TrainingPlanUiState.Loading,
+                    onBack = onBack,
+                    onRefresh = onRefresh
+                )
+            }
             when (state) {
                 TrainingPlanUiState.Loading -> Unit
-                is TrainingPlanUiState.Error -> TrainingPlanErrorCard(
-                    backdrop = backdrop,
-                    message = state.message,
-                    primary = primary,
-                    secondary = secondary,
-                    shadow = shadow,
-                    onRetry = onRefresh
-                )
-                is TrainingPlanUiState.Content -> TrainingPlanContent(
-                    backdrop = backdrop,
-                    result = state.result,
-                    hasCustomBackground = pageBackgroundBitmap != null,
-                    primary = primary,
-                    secondary = secondary,
-                    shadow = shadow
-                )
+                is TrainingPlanUiState.Error -> item(key = "training_plan_error") {
+                    TrainingPlanErrorCard(
+                        backdrop = backdrop,
+                        message = state.message,
+                        primary = primary,
+                        secondary = secondary,
+                        shadow = shadow,
+                        onRetry = onRefresh
+                    )
+                }
+                is TrainingPlanUiState.Content -> {
+                    item(key = "training_plan_summary") {
+                        TrainingPlanSummaryCard(
+                            backdrop = backdrop,
+                            summary = state.result.summary,
+                            hasCustomBackground = pageBackgroundBitmap != null,
+                            primary = primary,
+                            secondary = secondary,
+                            shadow = shadow
+                        )
+                    }
+                    val orderedCategories = listOf(
+                        "学科基础课组",
+                        "通识必修课",
+                        "实践教学环节",
+                        "专业核心课",
+                        "专业方向课",
+                        "艺术审美类",
+                        "耕读教育类",
+                        "体育健康类",
+                        "四史教育类"
+                    )
+                    val order = orderedCategories.withIndex().associate { it.value to it.index }
+                    val categoryItems = state.result.items
+                        .filterNot { it.category == "其它" }
+                        .sortedBy { order[it.category] ?: Int.MAX_VALUE }
+                    items(
+                        items = categoryItems,
+                        key = { item -> "training_plan_category_${item.category}" }
+                    ) { item ->
+                        TrainingPlanCategoryCard(
+                            backdrop = backdrop,
+                            item = item,
+                            hasCustomBackground = pageBackgroundBitmap != null,
+                            primary = primary,
+                            secondary = secondary,
+                            shadow = shadow
+                        )
+                    }
+                }
             }
         }
         if (state is TrainingPlanUiState.Loading) {
@@ -247,51 +286,6 @@ private fun TrainingPlanHeader(
                 colorFilter = ColorFilter.tint(CampusComposeTheme.colors.accent)
             )
         }
-    }
-}
-
-@Composable
-private fun TrainingPlanContent(
-    backdrop: Backdrop,
-    result: RemoteTrainingPlanResult,
-    hasCustomBackground: Boolean,
-    primary: Color,
-    secondary: Color,
-    shadow: Shadow?
-) {
-    val orderedCategories = listOf(
-        "学科基础课组",
-        "通识必修课",
-        "实践教学环节",
-        "专业核心课",
-        "专业方向课",
-        "艺术审美类",
-        "耕读教育类",
-        "体育健康类",
-        "四史教育类"
-    )
-    val order = orderedCategories.withIndex().associate { it.value to it.index }
-    val items = result.items
-        .filterNot { it.category == "其它" }
-        .sortedBy { order[it.category] ?: Int.MAX_VALUE }
-
-    TrainingPlanSummaryCard(
-        backdrop = backdrop,
-        summary = result.summary,
-        hasCustomBackground = hasCustomBackground,
-        primary = primary,
-        secondary = secondary,
-        shadow = shadow
-    )
-    items.forEach { item ->
-        TrainingPlanCategoryCard(
-            backdrop = backdrop,
-            item = item,
-            hasCustomBackground = hasCustomBackground,
-            primary = primary,
-            secondary = secondary,
-            shadow = shadow
-        )
     }
 }
 
@@ -400,7 +394,7 @@ private fun TrainingPlanCategoryCard(
     var expanded by remember(item.category) { mutableStateOf(false) }
     val arrowRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(durationMillis = 170, easing = FastOutSlowInEasing),
+        animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
         label = "trainingPlanArrow"
     )
     val shape = RoundedRectangle(21.dp)
@@ -504,13 +498,21 @@ private fun TrainingPlanCategoryCard(
         AnimatedVisibility(
             visible = expanded,
             enter = expandVertically(
-                animationSpec = tween(durationMillis = 170, easing = FastOutSlowInEasing),
+                animationSpec = tween(durationMillis = 230, easing = LinearOutSlowInEasing),
                 expandFrom = Alignment.Top
-            ) + fadeIn(animationSpec = tween(durationMillis = 110)),
+            ) + fadeIn(
+                animationSpec = tween(
+                    durationMillis = 190,
+                    delayMillis = 20,
+                    easing = LinearOutSlowInEasing
+                )
+            ),
             exit = shrinkVertically(
-                animationSpec = tween(durationMillis = 145, easing = FastOutSlowInEasing),
+                animationSpec = tween(durationMillis = 190, easing = FastOutLinearInEasing),
                 shrinkTowards = Alignment.Top
-            ) + fadeOut(animationSpec = tween(durationMillis = 85))
+            ) + fadeOut(
+                animationSpec = tween(durationMillis = 170, easing = FastOutLinearInEasing)
+            )
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(
@@ -660,23 +662,10 @@ private fun sortTrainingPlanSubjects(
 }
 
 private fun trainingPlanTermOrder(term: String): Int {
-    val match = Regex("^(\\d{4})-\\d{4}-([12])$").matchEntire(term.trim()) ?: return -1
-    val startYear = match.groupValues[1].toIntOrNull() ?: return -1
-    val semester = match.groupValues[2].toIntOrNull() ?: return -1
-    return startYear * 2 + semester - 1
+    return AcademicTermCalendar.order(term.trim()).takeIf { it != Int.MIN_VALUE } ?: -1
 }
 
-private fun currentTrainingPlanTerm(): String {
-    val calendar = Calendar.getInstance()
-    val year = calendar.get(Calendar.YEAR)
-    val month = calendar.get(Calendar.MONTH) + 1
-    val day = calendar.get(Calendar.DAY_OF_MONTH)
-    return when {
-        month > 7 || (month == 7 && day >= 20) -> "$year-${year + 1}-1"
-        month > 2 || (month == 2 && day >= 16) -> "${year - 1}-$year-2"
-        else -> "${year - 1}-$year-1"
-    }
-}
+private fun currentTrainingPlanTerm(): String = AcademicTermCalendar.currentTerm()
 
 @Composable
 private fun PlanMetric(

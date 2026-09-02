@@ -402,40 +402,13 @@ internal object ScoreUpdateScheduler {
         }
     }
 
-    fun currentTerm(now: Calendar = Calendar.getInstance()): String {
-        val year = now.get(Calendar.YEAR)
-        val month = now.get(Calendar.MONTH) + 1
-        val day = now.get(Calendar.DAY_OF_MONTH)
-        return when {
-            month > 7 || (month == 7 && day >= 20) -> "$year-${year + 1}-1"
-            month > 2 || (month == 2 && day >= 16) -> "${year - 1}-$year-2"
-            else -> "${year - 1}-$year-1"
-        }
-    }
+    fun currentTerm(now: Calendar = Calendar.getInstance()): String =
+        AcademicTermCalendar.currentTerm(now)
 
     fun latestTermForAccount(
         account: String,
         now: Calendar = Calendar.getInstance()
-    ): String {
-        val current = currentTerm(now)
-        val currentStartYear = current.substringBefore('-').toIntOrNull() ?: return current
-        val enrollmentYear = account.take(4).toIntOrNull()
-            ?.takeIf { it in 2000..currentStartYear }
-            ?: return current
-        val lastUndergraduateTerm = "${enrollmentYear + 3}-${enrollmentYear + 4}-2"
-        return if (termOrder(current) > termOrder(lastUndergraduateTerm)) {
-            lastUndergraduateTerm
-        } else {
-            current
-        }
-    }
-
-    private fun termOrder(term: String): Int {
-        val parts = term.split('-')
-        val startYear = parts.getOrNull(0)?.toIntOrNull() ?: return Int.MIN_VALUE
-        val semester = parts.getOrNull(2)?.toIntOrNull() ?: return Int.MIN_VALUE
-        return startYear * 2 + semester
-    }
+    ): String = AcademicTermCalendar.latestTermForAccount(account, now)
 }
 
 private object ScoreUpdateSnapshotStore {

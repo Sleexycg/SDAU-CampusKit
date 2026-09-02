@@ -932,24 +932,9 @@ class MainActivity : ComponentActivity() {
             .format(weekBaseDate(selectedTerm(), currentWeek).time)
     }
 
-    private fun inferredCurrentTerm(): String {
-        val today = Calendar.getInstance()
-        val year = today.get(Calendar.YEAR)
-        val month = today.get(Calendar.MONTH) + 1
-        val day = today.get(Calendar.DAY_OF_MONTH)
-        return when {
-            month > 7 || (month == 7 && day >= 20) -> "$year-${year + 1}-1"
-            month > 2 || (month == 2 && day >= 16) -> "${year - 1}-$year-2"
-            else -> "${year - 1}-$year-1"
-        }
-    }
+    private fun inferredCurrentTerm(): String = AcademicTermCalendar.currentTerm()
 
-    private fun nextTerm(term: String): String {
-        val parts = term.split("-")
-        if (parts.size != 3) return term
-        val start = parts[0].toIntOrNull() ?: return term
-        return if (parts[2] == "1") "${start}-${start + 1}-2" else "${start + 1}-${start + 2}-1"
-    }
+    private fun nextTerm(term: String): String = AcademicTermCalendar.nextTerm(term)
 
     private fun scoreTermOptions(): List<String> {
         val account = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -966,25 +951,8 @@ class MainActivity : ComponentActivity() {
         return academicTermsForAccount(account) ?: listOf(inferredCurrentTerm())
     }
 
-    private fun academicTermsForAccount(account: String): List<String>? {
-        val current = inferredCurrentTerm()
-        val currentStartYear = current.substringBefore('-').toIntOrNull()
-            ?: Calendar.getInstance().get(Calendar.YEAR)
-        val enrollmentYear = account.take(4).toIntOrNull()
-            ?.takeIf { it in 2000..currentStartYear }
-            ?: return null
-        val lastUndergraduateTerm = "${enrollmentYear + 3}-${enrollmentYear + 4}-2"
-        val lastAvailableOrder = minOf(termOrder(current), termOrder(lastUndergraduateTerm))
-        val result = mutableListOf<String>()
-        var term = "$enrollmentYear-${enrollmentYear + 1}-1"
-        while (result.size < 8 && termOrder(term) <= lastAvailableOrder) {
-            result += term
-            val next = nextTerm(term)
-            if (next == term) break
-            term = next
-        }
-        return result.takeIf { it.isNotEmpty() }
-    }
+    private fun academicTermsForAccount(account: String): List<String>? =
+        AcademicTermCalendar.termsForAccount(account)
 
     private fun selectedScoreTerm(): String {
         val options = scoreTermOptions()
@@ -994,28 +962,10 @@ class MainActivity : ComponentActivity() {
             ?: options.first()
     }
 
-    private fun semesterOptions(account: String? = null): Array<String> {
-        account?.let { academicTermsForAccount(it) }
-            ?.let { return it.toTypedArray() }
-        val result = mutableListOf<String>()
-        val current = inferredCurrentTerm()
-        val base = OFFICIAL_TERM
-        var term = if (termOrder(current) < termOrder(base)) current else base
-        while (termOrder(term) <= termOrder(current)) {
-            result += term
-            val next = nextTerm(term)
-            if (next == term) break
-            term = next
-        }
-        return result.takeLast(8).toTypedArray()
-    }
+    private fun semesterOptions(account: String? = null): Array<String> =
+        AcademicTermCalendar.availableTerms(account).toTypedArray()
 
-    private fun termOrder(term: String): Int {
-        val parts = term.split("-")
-        val start = parts.getOrNull(0)?.toIntOrNull() ?: return Int.MIN_VALUE
-        val number = parts.getOrNull(2)?.toIntOrNull() ?: return 0
-        return start * 2 + number - 1
-    }
+    private fun termOrder(term: String): Int = AcademicTermCalendar.order(term)
 
     private fun setSystemBars(color: Int) {
         window.statusBarColor = color
@@ -4578,7 +4528,7 @@ class MainActivity : ComponentActivity() {
             drawCenteredText(label, centerX, headerCenterY, 31f, Color.rgb(42, 77, 92), Typeface.BOLD)
         }
 
-        val timeRanges = if (mode == ScheduleMode.SPRING) springTimeRanges() else summerTimeRanges()
+        val timeRanges = ScheduleTimePolicy.displayRanges(mode)
         for (row in 0 until 5) {
             val top = gridTop + headerHeight + row * rowHeight
             val centerX = gridLeft + timeColumnWidth / 2f
@@ -5359,19 +5309,8 @@ class MainActivity : ComponentActivity() {
             ?: courses.minWithOrNull(compareBy<Course> { it.day }.thenBy { it.startSlot })
     }
 
-    private fun courseVisibleInWeek(course: Course, week: Int): Boolean {
-        // 第 0 周专门表示“学期尚未开始”。即使课程没有填写周次范围，
-        // 也不能在开学日期之前绘制或响应点击。
-        if (week <= 0) return false
-        val normalized = course.weeks.replace("周", "").replace("—", "-").replace("至", "-")
-        val ranges = Regex("(\\d+)(?:\\s*-\\s*(\\d+))?").findAll(normalized).toList()
-        if (ranges.isEmpty()) return true
-        return ranges.any { match ->
-            val start = match.groupValues[1].toIntOrNull() ?: return@any false
-            val end = match.groupValues[2].toIntOrNull() ?: start
-            week in start.coerceAtLeast(1)..end
-        }
-    }
+    private fun courseVisibleInWeek(course: Course, week: Int): Boolean =
+        CourseWeekRule.isVisible(course.weeks, week)
 
     private fun courseVisibleOnScheduleDate(course: Course, term: String, week: Int): Boolean {
         if (!courseVisibleInWeek(course, week)) return false
@@ -5397,11 +5336,7 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    private fun currentStartMinutes() = if (scheduleMode == ScheduleMode.SPRING) {
-        intArrayOf(480, 535, 600, 655, 840, 895, 960, 1015, 1140, 1195)
-    } else {
-        intArrayOf(480, 535, 600, 655, 870, 925, 990, 1045, 1170, 1225)
-    }
+    private fun currentStartMinutes(): IntArray = ScheduleTimePolicy.startMinutes(scheduleMode)
 
     private fun togglePushNotifications() {
         if (pushEnabled) {
@@ -5495,19 +5430,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun courseTimeLabel(course: Course): String {
-        val ranges = if (scheduleMode == ScheduleMode.SPRING) springTimeRanges() else summerTimeRanges()
+        val ranges = ScheduleTimePolicy.displayRanges(scheduleMode)
         return "${ranges[course.startSlot].first}-${ranges[course.startSlot + course.slotCount - 1].second}"
     }
-
-    private fun springTimeRanges() = arrayOf(
-        "8:00" to "8:45", "8:55" to "9:40", "10:00" to "10:45", "10:55" to "11:40", "14:00" to "14:45",
-        "14:55" to "15:40", "16:00" to "16:45", "16:55" to "17:40", "19:00" to "19:45", "19:55" to "20:40"
-    )
-
-    private fun summerTimeRanges() = arrayOf(
-        "8:00" to "8:45", "8:55" to "9:40", "10:00" to "10:45", "10:55" to "11:40", "14:30" to "15:15",
-        "15:25" to "16:10", "16:30" to "17:15", "17:25" to "18:10", "19:30" to "20:15", "20:25" to "21:10"
-    )
 
     private fun cancelSystemCourseReminder() {
         if (!::pageHost.isInitialized) return
@@ -6294,11 +6219,8 @@ class MainActivity : ComponentActivity() {
         return term == null || preferences.getString(KEY_TERM, "").orEmpty() == term
     }
 
-    private fun courseCacheKey(account: String, term: String): String {
-        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "${KEY_COURSES_PREFIX}_${safeAccount}_$safeTerm"
-    }
+    private fun courseCacheKey(account: String, term: String): String =
+        CourseCacheKeys.imported(account, term)
 
     private fun studentNameCacheKey(account: String): String {
         val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
@@ -6384,17 +6306,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun customCourseCacheKey(account: String, term: String): String {
-        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "${KEY_CUSTOM_COURSES_PREFIX}_${safeAccount}_$safeTerm"
-    }
+    private fun customCourseCacheKey(account: String, term: String): String =
+        CourseCacheKeys.custom(account, term)
 
-    private fun legacyCustomCourseCacheKey(term: String): String =
-        "${KEY_CUSTOM_COURSES_PREFIX}_${term.replace(Regex("[^A-Za-z0-9_-]"), "_")}" 
+    private fun legacyCustomCourseCacheKey(term: String): String = CourseCacheKeys.legacyCustom(term)
 
-    private fun customCourseOwnerKey(term: String): String =
-        "${KEY_CUSTOM_COURSES_OWNER_PREFIX}_${term.replace(Regex("[^A-Za-z0-9_-]"), "_")}"
+    private fun customCourseOwnerKey(term: String): String = CourseCacheKeys.customOwner(term)
 
     private fun loadCoursesFromPreference(key: String, isCustom: Boolean): List<Course> {
         val raw = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(key, null) ?: return emptyList()
@@ -6655,24 +6572,6 @@ class MainActivity : ComponentActivity() {
 
     private fun text(value: String, size: Float, color: Int, style: Int) = TextView(this).apply {
         text = value; textSize = size; setTextColor(color); setTypeface(Typeface.DEFAULT, style); includeFontPadding = false
-    }
-
-    private fun fixedAdaptiveText(
-        value: String,
-        maximumDp: Float,
-        minimumDp: Float,
-        color: Int,
-        style: Int
-    ) = TextView(this).apply {
-        text = value
-        setTextColor(color)
-        setTypeface(Typeface.DEFAULT, style)
-        includeFontPadding = false
-        maxLines = 1
-        setTextSize(TypedValue.COMPLEX_UNIT_PX, dp(maximumDp).toFloat())
-        setAutoSizeTextTypeUniformWithConfiguration(
-            minimumDp.toInt(), maximumDp.toInt(), 1, TypedValue.COMPLEX_UNIT_DIP
-        )
     }
 
     private fun hideKeyboard() {
@@ -9024,9 +8923,6 @@ class MainActivity : ComponentActivity() {
         private const val KEY_TERM = "term"
         private const val KEY_SCORE_TERM = "score_term"
         private const val KEY_COURSES = "courses_cache"
-        private const val KEY_COURSES_PREFIX = "courses_cache_account"
-        private const val KEY_CUSTOM_COURSES_PREFIX = "custom_courses_cache"
-        private const val KEY_CUSTOM_COURSES_OWNER_PREFIX = "custom_courses_owner"
         private const val KEY_PUBLIC_SCHEDULE_SYNCED_TERM = "public_schedule_synced_term"
         private const val KEY_PUBLIC_SCHEDULE_HASH_PREFIX = "public_schedule_sha256_"
         private const val KEY_SCORES = "scores_cache"
@@ -9051,7 +8947,6 @@ class MainActivity : ComponentActivity() {
         private const val VERSION_URL = "https://raw.giteeusercontent.com/sleexy/onlinedata/raw/master/WeSDAU_Class_Schedule_version.json"
         private const val APK_URL = "https://gitee.com/sleexy/onlinedata/raw/master/ClassSchedule-modern.apk"
         private const val UPDATE_FILE_NAME = "WeSDAU课程表最新版本.apk"
-        private const val OFFICIAL_TERM = "2026-2027-1"
         private const val SAME_WEEK_COURSE_COLOR_WEIGHT = 1.0
         private const val NEARBY_COURSE_COLOR_WEIGHT = 3.0
         private const val CURRENT_WEEK_COURSE_COLOR_WEIGHT = 6.0

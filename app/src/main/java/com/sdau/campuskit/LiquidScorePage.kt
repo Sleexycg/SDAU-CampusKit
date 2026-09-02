@@ -527,9 +527,7 @@ private fun ScoreReminderButton(
             painter = painterResource(R.drawable.ic_push_on),
             contentDescription = if (enabled) "成绩更新提醒已开启" else "成绩更新提醒已关闭",
             modifier = Modifier.size(22.dp),
-            colorFilter = ColorFilter.tint(
-                if (enabled) themeColors.accent else Color(textPalette.primary)
-            )
+            colorFilter = ColorFilter.tint(themeColors.accent)
         )
     }
 }

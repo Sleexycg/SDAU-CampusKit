@@ -113,12 +113,9 @@ object CourseReminderScheduler {
     private const val PREFS_NAME = "offline_login"
     private const val KEY_ACCOUNT = "account"
     private const val KEY_COURSES = "courses_cache"
-    private const val KEY_COURSES_PREFIX = "courses_cache_account"
-    private const val KEY_CUSTOM_COURSES_PREFIX = "custom_courses_cache"
     private const val KEY_PUSH_ENABLED = "push_enabled"
     private const val KEY_TERM = "term"
     private const val REMINDER_REQUEST_CODE = 3002
-    private const val OFFICIAL_TERM = "2026-2027-1"
     private const val MINIMUM_LEAD_TIME = 5_000L
 
     fun scheduleNext(context: Context) {
@@ -129,7 +126,9 @@ object CourseReminderScheduler {
             return
         }
         val account = preferences.getString(KEY_ACCOUNT, "").orEmpty()
-        val term = preferences.getString(KEY_TERM, OFFICIAL_TERM).orEmpty().ifBlank { OFFICIAL_TERM }
+        val term = preferences.getString(KEY_TERM, AcademicTermCalendar.OFFICIAL_TERM)
+            .orEmpty()
+            .ifBlank { AcademicTermCalendar.OFFICIAL_TERM }
         val imported = account.takeIf { it.isNotBlank() }
             ?.let { preferences.getString(courseCacheKey(it, term), null) }
             ?: preferences.getString(KEY_COURSES, null)
@@ -184,20 +183,13 @@ object CourseReminderScheduler {
         val timeLabel: String
     )
 
-    private fun courseCacheKey(account: String, term: String): String {
-        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "${KEY_COURSES_PREFIX}_${safeAccount}_$safeTerm"
-    }
+    private fun courseCacheKey(account: String, term: String): String =
+        CourseCacheKeys.imported(account, term)
 
-    private fun customCourseCacheKey(account: String, term: String): String {
-        val safeAccount = account.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        val safeTerm = term.replace(Regex("[^A-Za-z0-9_-]"), "_")
-        return "${KEY_CUSTOM_COURSES_PREFIX}_${safeAccount}_$safeTerm"
-    }
+    private fun customCourseCacheKey(account: String, term: String): String =
+        CourseCacheKeys.custom(account, term)
 
-    private fun legacyCustomCourseCacheKey(term: String): String =
-        "${KEY_CUSTOM_COURSES_PREFIX}_${term.replace(Regex("[^A-Za-z0-9_-]"), "_")}"
+    private fun legacyCustomCourseCacheKey(term: String): String = CourseCacheKeys.legacyCustom(term)
 
     private fun findNextReminder(
         courses: List<ReminderCourse>,
@@ -215,11 +207,7 @@ object CourseReminderScheduler {
         for (dayOffset in 0..147) {
             val date = (today.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, dayOffset) }
             if (CampusHolidayCalendar.isHoliday(date)) continue
-            val starts = if (ScheduleTimePolicy.modeFor(date) == ScheduleMode.SUMMER) {
-                SUMMER_START_MINUTES
-            } else {
-                SPRING_START_MINUTES
-            }
+            val starts = ScheduleTimePolicy.startMinutes(ScheduleTimePolicy.modeFor(date))
             val week = weekForDate(date, termStart)
             if (week !in 1..20) continue
             val dayCourses = courses
@@ -278,17 +266,8 @@ object CourseReminderScheduler {
         return courses.filter { it.day in 0..6 && it.name.isNotBlank() }
     }
 
-    private fun courseVisibleInWeek(course: ReminderCourse, week: Int): Boolean {
-        if (week <= 0) return false
-        val normalized = course.weeks.replace("周", "").replace("—", "-").replace("至", "-")
-        val ranges = Regex("(\\d+)(?:\\s*-\\s*(\\d+))?").findAll(normalized).toList()
-        if (ranges.isEmpty()) return true
-        return ranges.any { match ->
-            val first = match.groupValues[1].toIntOrNull() ?: return@any false
-            val last = match.groupValues[2].toIntOrNull() ?: first
-            week in first.coerceAtLeast(1)..last
-        }
-    }
+    private fun courseVisibleInWeek(course: ReminderCourse, week: Int): Boolean =
+        CourseWeekRule.isVisible(course.weeks, week)
 
     private fun termStartDate(term: String): Calendar = AcademicTermCalendar.startDate(term)
 
@@ -308,6 +287,4 @@ object CourseReminderScheduler {
 
     private fun formatMinutes(minutes: Int): String = "%d:%02d".format(minutes / 60, minutes % 60)
 
-    private val SPRING_START_MINUTES = intArrayOf(480, 535, 600, 655, 840, 895, 960, 1015, 1140, 1195)
-    private val SUMMER_START_MINUTES = intArrayOf(480, 535, 600, 655, 870, 925, 990, 1045, 1170, 1225)
 }
