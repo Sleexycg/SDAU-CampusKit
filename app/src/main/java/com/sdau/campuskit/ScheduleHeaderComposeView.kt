@@ -136,6 +136,10 @@ internal class ScheduleHeaderComposeView(
         week = value
     }
 
+    fun updateDate(value: String) {
+        date = value
+    }
+
     fun updatePalette(value: ScheduleTextPalette) {
         palette = value
     }

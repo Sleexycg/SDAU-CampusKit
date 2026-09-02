@@ -831,7 +831,11 @@ class MainActivity : ComponentActivity() {
             if (loadScoreCache() == null) saveScoreCache(sampleScoreResult(selectedScoreTerm()))
             saveExamCache(selectedTerm(), sampleExams())
         }
-        currentWeek = weekForTerm(if (viewingPublicSchedule) publicScheduleTerm else selectedTerm())
+        currentWeek = if (viewingPublicSchedule) {
+            weekForTerm(publicScheduleTerm)
+        } else {
+            initialPersonalWeek(selectedTerm())
+        }
         if (emptyRoomResult == null) syncEmptyRoomDefaultsToNow()
         currentMainSection = 0
         val themeColors = campusAndroidColors(this)
@@ -850,27 +854,7 @@ class MainActivity : ComponentActivity() {
 
     private fun activeScheduleCourses(): List<Course> = if (viewingPublicSchedule) publicScheduleCourses else loadCourseCache()
 
-    private fun termStartDate(term: String): Calendar {
-        val date = Calendar.getInstance()
-        when (term) {
-            OFFICIAL_TERM -> date.set(
-                OFFICIAL_TERM_START_YEAR,
-                OFFICIAL_TERM_START_MONTH,
-                OFFICIAL_TERM_START_DAY,
-                0, 0, 0
-            )
-            "2026-2027-2" -> date.set(2027, Calendar.FEBRUARY, 22, 0, 0, 0)
-            else -> {
-                val parts = term.split("-")
-                val start = parts.firstOrNull()?.toIntOrNull() ?: Calendar.getInstance().get(Calendar.YEAR)
-                if (parts.getOrNull(2) == "2") date.set(start + 1, Calendar.FEBRUARY, 1, 0, 0, 0)
-                else date.set(start, Calendar.SEPTEMBER, 1, 0, 0, 0)
-                while (date.get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) date.add(Calendar.DAY_OF_MONTH, 1)
-            }
-        }
-        date.set(Calendar.MILLISECOND, 0)
-        return date
-    }
+    private fun termStartDate(term: String): Calendar = AcademicTermCalendar.startDate(term)
 
     private fun weekForTerm(term: String): Int {
         val start = termStartDate(term)
@@ -879,6 +863,56 @@ class MainActivity : ComponentActivity() {
         today.set(Calendar.HOUR_OF_DAY, 0); today.set(Calendar.MINUTE, 0); today.set(Calendar.SECOND, 0)
         val days = ((today.timeInMillis - start.timeInMillis) / 86_400_000L).toInt()
         return if (days < 0) 0 else (days / 7 + 1).coerceIn(1, 20)
+    }
+
+    private fun initialPersonalWeek(term: String): Int {
+        // Historical terms reserve page 0 for a whole-term overview instead of the
+        // generic "term has not started" page used by current/future terms.
+        return if (termOrder(term) < termOrder(inferredCurrentTerm())) 0 else weekForTerm(term)
+    }
+
+    private fun isHistoricalPersonalTerm(term: String = selectedTerm()): Boolean {
+        return !viewingPublicSchedule && termOrder(term) < termOrder(inferredCurrentTerm())
+    }
+
+    private fun isHistoricalOverview(week: Int = currentWeek): Boolean {
+        return isHistoricalPersonalTerm() && week == 0
+    }
+
+    private fun includeWholeTermInScheduleExport(): Boolean {
+        return viewingPublicSchedule || isHistoricalPersonalTerm()
+    }
+
+    private fun courseVisibleOnDisplayedSchedule(course: Course, week: Int): Boolean {
+        return isHistoricalOverview(week) ||
+            courseVisibleOnScheduleDate(course, activeScheduleTerm(), week)
+    }
+
+    private fun weekBaseDate(term: String, week: Int): Calendar {
+        if (week == 0) {
+            return Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, 0)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                while (get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) {
+                    add(Calendar.DAY_OF_MONTH, -1)
+                }
+            }
+        }
+        return termStartDate(term).apply {
+            add(Calendar.DAY_OF_MONTH, (week - 1) * 7)
+        }
+    }
+
+    private fun scheduleHeaderDateLabel(): String {
+        if (viewingPublicSchedule) return publicScheduleClassName
+        if (isHistoricalOverview()) {
+            return SimpleDateFormat("yyyy/M/d", Locale.CHINA)
+                .format(termStartDate(selectedTerm()).time)
+        }
+        return SimpleDateFormat("yyyy/M/d", Locale.CHINA)
+            .format(weekBaseDate(selectedTerm(), currentWeek).time)
     }
 
     private fun inferredCurrentTerm(): String {
@@ -912,21 +946,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun scoreTermsForAccount(account: String): List<String> {
+        return academicTermsForAccount(account) ?: listOf(inferredCurrentTerm())
+    }
+
+    private fun academicTermsForAccount(account: String): List<String>? {
         val current = inferredCurrentTerm()
         val currentStartYear = current.substringBefore('-').toIntOrNull()
             ?: Calendar.getInstance().get(Calendar.YEAR)
         val enrollmentYear = account.take(4).toIntOrNull()
             ?.takeIf { it in 2000..currentStartYear }
-            ?: return listOf(current)
+            ?: return null
+        val lastUndergraduateTerm = "${enrollmentYear + 3}-${enrollmentYear + 4}-2"
+        val lastAvailableOrder = minOf(termOrder(current), termOrder(lastUndergraduateTerm))
         val result = mutableListOf<String>()
         var term = "$enrollmentYear-${enrollmentYear + 1}-1"
-        while (termOrder(term) <= termOrder(current)) {
+        while (result.size < 8 && termOrder(term) <= lastAvailableOrder) {
             result += term
             val next = nextTerm(term)
             if (next == term) break
             term = next
         }
-        return result
+        return result.takeIf { it.isNotEmpty() }
     }
 
     private fun selectedScoreTerm(): String {
@@ -937,7 +977,9 @@ class MainActivity : ComponentActivity() {
             ?: options.first()
     }
 
-    private fun semesterOptions(): Array<String> {
+    private fun semesterOptions(account: String? = null): Array<String> {
+        account?.let { academicTermsForAccount(it) }
+            ?.let { return it.toTypedArray() }
         val result = mutableListOf<String>()
         val current = inferredCurrentTerm()
         val base = OFFICIAL_TERM
@@ -1015,7 +1057,8 @@ class MainActivity : ComponentActivity() {
         }
         scroll.addView(viewport, FrameLayout.LayoutParams(-1, -2))
 
-        val card = surfaceCard(dp(28f).toFloat()).apply {
+        // 登录主卡片与成绩详情弹窗采用统一的外层圆角。
+        val card = surfaceCard(dp(24f).toFloat()).apply {
             setCardBackgroundColor(campusAndroidColors(this@MainActivity).surface)
             setStrokeColor(campusAndroidColors(this@MainActivity).cardOutline)
             cardElevation = if (activeThemeColors.isDark) 0f else dp(2).toFloat()
@@ -1048,8 +1091,6 @@ class MainActivity : ComponentActivity() {
             }
         ) { nextMode, _ -> body.animateToMode(nextMode) }
         body.addView(modeToggle, LinearLayout.LayoutParams(-1, dp(60)).apply {
-            leftMargin = dp(16)
-            rightMargin = dp(16)
             bottomMargin = dp(20)
         })
         body.attachInitialForm(buildLoginModeForm(loginMode))
@@ -1089,12 +1130,20 @@ class MainActivity : ComponentActivity() {
             passwordBox.addView(password)
             form.addView(passwordBox, spacedParams(dp(20)))
 
-            val semesterOptions = semesterOptions()
+            val semesterOptions = semesterOptions(studentId.text?.toString().orEmpty()).reversedArray()
             val savedTerm = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_TERM, "")
             val selectedTerm = savedTerm?.takeIf { it in semesterOptions } ?: semesterOptions.first()
             semesterInput = MaterialAutoCompleteTextView(this)
             form.addView(
-                publicFormField("学期", semesterInput, semesterOptions.toList(), selectedTerm) { },
+                publicFormField(
+                    "学期",
+                    semesterInput,
+                    semesterOptions.toList(),
+                    selectedTerm,
+                    optionsProvider = {
+                        semesterOptions(studentId.text?.toString().orEmpty()).toList().asReversed()
+                    }
+                ) { },
                 spacedParams(dp(18))
             )
         } else {
@@ -1208,9 +1257,12 @@ class MainActivity : ComponentActivity() {
                 // 个人主页中的 infoContentTitle 是教务系统显示“姓名-学号”的来源。
                 // 姓名获取失败不影响课程登录，成绩导出会回退为仅显示学号。
                 val profile = runCatching { repository.queryStudentProfile(id, pwd) }.getOrNull()
-                val courses = recolorCourses(remoteCourses.map { remote ->
-                    Course(remote.day, remote.startSlot, remote.slotCount, remote.name, remote.room, remote.teacher, COURSE_COLORS.first(), Color.WHITE, remote.weeks)
-                })
+                val courses = recolorCourses(
+                    remoteCourses.map { remote ->
+                        Course(remote.day, remote.startSlot, remote.slotCount, remote.name, remote.room, remote.teacher, COURSE_COLORS.first(), Color.WHITE, remote.weeks)
+                    },
+                    term = selectedSemester
+                )
                 runOnUiThread {
                     if (
                         requestGeneration != academicSessionGeneration ||
@@ -1420,12 +1472,14 @@ class MainActivity : ComponentActivity() {
         field: MaterialAutoCompleteTextView,
         options: List<String>,
         selected: String = "",
+        optionsProvider: (() -> List<String>)? = null,
         onSelected: (String) -> Unit
     ): View {
         val enabled = options.isNotEmpty()
         val resolved = selected.takeIf { it in options }.orEmpty()
         return selectionFilterCard(label, resolved, field, enabled, true) {
-            showPublicOptionPicker(label, options, field.text?.toString().orEmpty()) { value ->
+            val currentOptions = optionsProvider?.invoke().orEmpty().ifEmpty { options }
+            showPublicOptionPicker(label, currentOptions, field.text?.toString().orEmpty()) { value ->
                 field.setText(value, false)
                 onSelected(value)
             }
@@ -3172,7 +3226,7 @@ class MainActivity : ComponentActivity() {
     private fun buildScheduleHeader(): View {
         return ScheduleHeaderComposeView(
             context = this,
-            initialDate = if (viewingPublicSchedule) publicScheduleClassName else todayLabel(),
+            initialDate = scheduleHeaderDateLabel(),
             initialWeek = formatWeekLabel(currentWeek),
             initialPalette = scheduleTextPalette,
             showRefresh = !viewingPublicSchedule,
@@ -4338,7 +4392,9 @@ class MainActivity : ComponentActivity() {
         paint.typeface = Typeface.create("sans-serif-black", Typeface.NORMAL)
         canvas.drawText("WeSDAU-课程表", padding, 96f, paint)
         drawText(
-            if (includeAllWeeks) "$term    $publicScheduleClassName"
+            if (includeAllWeeks) {
+                "$term    ${if (viewingPublicSchedule) publicScheduleClassName else "学期总览"}"
+            }
             else "$term    ${if (week > 0) "第${week}周" else "学期未开始"}",
             padding,
             136f,
@@ -4451,8 +4507,9 @@ class MainActivity : ComponentActivity() {
             val directory = prepareShareCache()
             val pngFile = File(directory, "课程表.png")
             val csvFile = File(directory, "课程表.csv")
+            val includeAllWeeks = includeWholeTermInScheduleExport()
             val bitmap = createScheduleBitmap(
-                activeScheduleTerm(), currentWeek, scheduleMode, activeScheduleCourses(), viewingPublicSchedule
+                activeScheduleTerm(), currentWeek, scheduleMode, activeScheduleCourses(), includeAllWeeks
             )
             try {
                 FileOutputStream(pngFile).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
@@ -4477,6 +4534,7 @@ class MainActivity : ComponentActivity() {
         val week = currentWeek
         val mode = scheduleMode
         val courses = activeScheduleCourses()
+        val includeAllWeeks = includeWholeTermInScheduleExport()
         if (courses.isEmpty()) {
             Toast.makeText(this, "课表尚未准备好", Toast.LENGTH_SHORT).show()
             return
@@ -4490,12 +4548,14 @@ class MainActivity : ComponentActivity() {
         networkExecutor.execute {
             var bitmap: Bitmap? = null
             try {
-                bitmap = createScheduleBitmap(term, week, mode, courses, viewingPublicSchedule)
-                val displayName = if (viewingPublicSchedule) {
-                    "专业课表-$term-$publicScheduleClassName.png"
-                } else {
-                    val weekName = if (week > 0) "第${week}周" else "学期未开始"
-                    "课表-$term-$weekName.png"
+                bitmap = createScheduleBitmap(term, week, mode, courses, includeAllWeeks)
+                val displayName = when {
+                    viewingPublicSchedule -> "专业课表-$term-$publicScheduleClassName.png"
+                    includeAllWeeks -> "学期课表-$term.png"
+                    else -> {
+                        val weekName = if (week > 0) "第${week}周" else "学期未开始"
+                        "课表-$term-$weekName.png"
+                    }
                 }
                 saveScheduleBitmapToPictures(bitmap, displayName)
                 runOnUiThread {
@@ -4607,14 +4667,19 @@ class MainActivity : ComponentActivity() {
         }
         val stored = if (refreshMapping) JSONObject() else previousMapping
         val allNames = courses.map { it.name }.distinct().sorted()
-        val actualWeek = weekForTerm(term).coerceAtLeast(1)
-        val activeCourses = courses.filter { latestCourseWeek(it) >= actualWeek }
+        val historicalTerm = termOrder(term) < termOrder(inferredCurrentTerm())
+        // A finished term must be colored from its complete course set. Using today's
+        // calculated week (normally clamped to week 20) marks most historical courses
+        // inactive and falls back every unmapped course to palette index 0.
+        val actualWeek = if (historicalTerm) 1 else weekForTerm(term).coerceAtLeast(1)
+        val activeCourses = if (historicalTerm) courses else {
+            courses.filter { latestCourseWeek(it) >= actualWeek }
+        }
         val activeNames = activeCourses.map { it.name }.distinct()
         val activeNameSet = activeNames.toSet()
-        val visibleCourseCounts = activeCourses
-            .filter { courseVisibleInWeek(it, actualWeek) }
-            .groupingBy { it.name }
-            .eachCount()
+        val visibleCourseCounts = (if (historicalTerm) activeCourses else {
+            activeCourses.filter { courseVisibleInWeek(it, actualWeek) }
+        }).groupingBy { it.name }.eachCount()
         val relations = buildCourseColorRelations(activeCourses, actualWeek)
         val usedActiveIndices = mutableSetOf<Int>()
         val indexByName = mutableMapOf<String, Int>()
@@ -5067,8 +5132,16 @@ class MainActivity : ComponentActivity() {
                 title = "分享",
                 options = listOf(
                     LiquidPickerOption(
-                        title = if (viewingPublicSchedule) "导出本专业课表为PNG" else "导出本周课表为PNG",
-                        subtitle = if (viewingPublicSchedule) "包含课程周数" else "保存当前周课表图片",
+                        title = when {
+                            viewingPublicSchedule -> "导出本专业课表为PNG"
+                            isHistoricalPersonalTerm() -> "导出本学期课表为PNG"
+                            else -> "导出本周课表为PNG"
+                        },
+                        subtitle = when {
+                            viewingPublicSchedule -> "包含课程周数"
+                            isHistoricalPersonalTerm() -> "包含本学期全部课程及课程周数"
+                            else -> "保存当前周课表图片"
+                        },
                         iconRes = R.drawable.ic_share_image,
                         onClick = ::shareWeekPng
                     ),
@@ -5155,11 +5228,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun jumpToCurrentWeek() {
-        val actualWeek = weekForTerm(selectedTerm())
+        val actualWeek = initialPersonalWeek(selectedTerm())
         if (actualWeek == currentWeek) return
         val direction = if (actualWeek > currentWeek) -1 else 1
         currentWeek = actualWeek
         scheduleHeader?.updateWeek(formatWeekLabel(currentWeek))
+        scheduleHeader?.updateDate(scheduleHeaderDateLabel())
         val grid = scheduleGrid ?: return
         val distance = dp(72f).toFloat() * direction
         grid.animate().translationX(distance).alpha(0f).setDuration(140).withEndAction {
@@ -5328,7 +5402,14 @@ class MainActivity : ComponentActivity() {
         return ((start.timeInMillis - today.timeInMillis) / 86_400_000L).toInt().coerceAtLeast(0)
     }
 
-    private fun formatWeekLabel(week: Int): String = if (week > 0) "第 $week 周" else "学期未开始"
+    private fun formatWeekLabel(week: Int): String {
+        if (isHistoricalOverview(week)) {
+            return "学期总览 · ${selectedTerm()}"
+        }
+        val base = if (week > 0) "第 $week 周" else "学期未开始"
+        val isEndedPersonalTerm = isHistoricalPersonalTerm()
+        return if (week > 0 && isEndedPersonalTerm) "$base · 学期已结束" else base
+    }
 
     private fun sampleCourses() = listOf(
         Course(0, 0, 2, "高等数学 A", "5N201", "张老师", Color.rgb(232, 126, 158), Color.WHITE),
@@ -6995,6 +7076,8 @@ class MainActivity : ComponentActivity() {
 
         init {
             setBackgroundColor(Color.TRANSPARENT)
+            clipChildren = false
+            clipToPadding = false
             liquidToggle = createLoginLiquidModeToggleView(
                 context = context,
                 initialIndex = if (initialMode == LoginMode.PUBLIC) 1 else 0,
@@ -7227,7 +7310,7 @@ class MainActivity : ComponentActivity() {
                     course.day == day &&
                         slot >= course.startSlot &&
                         slot < course.startSlot + course.slotCount &&
-                        courseVisibleOnScheduleDate(course, activeScheduleTerm(), weekIndex)
+                        courseVisibleOnDisplayedSchedule(course, weekIndex)
                 }
             }
             if (tappedCourse != null) {
@@ -7489,7 +7572,7 @@ class MainActivity : ComponentActivity() {
             canvas.clipRect(0f, 0f, desiredWidth.toFloat(), desiredHeight.toFloat())
             drawHeaders(canvas, week); drawTimes(canvas)
             val visibleCourses = courses.filter {
-                courseVisibleOnScheduleDate(it, activeScheduleTerm(), week)
+                courseVisibleOnDisplayedSchedule(it, week)
             }
             val placements = buildCoursePlacements(visibleCourses)
             val showAddPlaceholder = !viewingPublicSchedule &&
@@ -7516,7 +7599,12 @@ class MainActivity : ComponentActivity() {
             if (!hasVisibleCourse) {
                 val centerX = timeColumnWidth + (desiredWidth - timeColumnWidth) / 2f
                 val groupCenterY = headerHeight + slotHeight * 4.5f
-                drawScheduleEmptyState(canvas, centerX, groupCenterY, week == 0)
+                drawScheduleEmptyState(
+                    canvas,
+                    centerX,
+                    groupCenterY,
+                    week == 0 && !isHistoricalOverview(week)
+                )
             }
             canvas.restoreToCount(save)
         }
@@ -7787,6 +7875,7 @@ class MainActivity : ComponentActivity() {
                             weekIndex = (weekIndex + delta).coerceIn(0, 20)
                             currentWeek = weekIndex
                             scheduleHeader?.updateWeek(formatWeekLabel(currentWeek))
+                            scheduleHeader?.updateDate(scheduleHeaderDateLabel())
                             performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                         }
                         dragOffset = 0f
@@ -7946,14 +8035,8 @@ class MainActivity : ComponentActivity() {
         }
 
         private fun displayWeekBaseDate(week: Int): Calendar {
-            if (week == 0) {
-                val today = Calendar.getInstance().apply {
-                    set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0)
-                }
-                while (today.get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) today.add(Calendar.DAY_OF_MONTH, -1)
-                return today
-            }
-            return termStartDate(selectedTerm()).apply { add(Calendar.DAY_OF_MONTH, (week - 1) * 7) }
+            if (isHistoricalOverview(week)) return termStartDate(selectedTerm())
+            return weekBaseDate(selectedTerm(), week)
         }
 
         private fun drawTimes(canvas: Canvas) {
@@ -8063,7 +8146,7 @@ class MainActivity : ComponentActivity() {
         private fun findCourseAt(x: Float, y: Float): Course? {
             if (y < headerHeight) return null
             return buildCoursePlacements(courses.filter {
-                courseVisibleOnScheduleDate(it, activeScheduleTerm(), weekIndex)
+                courseVisibleOnDisplayedSchedule(it, weekIndex)
             })
                 .firstOrNull { placement ->
                 val course = placement.course
@@ -8681,9 +8764,6 @@ class MainActivity : ComponentActivity() {
         private const val APK_URL = "https://gitee.com/sleexy/onlinedata/raw/master/ClassSchedule-modern.apk"
         private const val UPDATE_FILE_NAME = "WeSDAU课程表最新版本.apk"
         private const val OFFICIAL_TERM = "2026-2027-1"
-        private const val OFFICIAL_TERM_START_YEAR = 2026
-        private const val OFFICIAL_TERM_START_MONTH = Calendar.SEPTEMBER
-        private const val OFFICIAL_TERM_START_DAY = 7
         private const val SAME_WEEK_COURSE_COLOR_WEIGHT = 1.0
         private const val NEARBY_COURSE_COLOR_WEIGHT = 3.0
         private const val CURRENT_WEEK_COURSE_COLOR_WEIGHT = 6.0

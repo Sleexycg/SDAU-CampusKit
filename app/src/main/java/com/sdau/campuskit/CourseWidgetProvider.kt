@@ -65,9 +65,6 @@ class CourseWidgetProvider : AppWidgetProvider() {
         private const val KEY_COURSES_PREFIX = "courses_cache_account"
         private const val KEY_CUSTOM_COURSES_PREFIX = "custom_courses_cache"
         private const val OFFICIAL_TERM = "2026-2027-1"
-        private const val OFFICIAL_TERM_START_YEAR = 2026
-        private const val OFFICIAL_TERM_START_MONTH = Calendar.SEPTEMBER
-        private const val OFFICIAL_TERM_START_DAY = 7
         private val FALLBACK_COLORS = intArrayOf(
             Color.rgb(130, 173, 247), Color.rgb(237, 184, 119),
             Color.rgb(120, 225, 208), Color.rgb(232, 138, 117)
@@ -353,20 +350,7 @@ class CourseWidgetProvider : AppWidgetProvider() {
             return Array(10) { index -> starts[index] to starts[index] + 45 }
         }
 
-        private fun termStartDate(term: String): Calendar = Calendar.getInstance().apply {
-            when (term) {
-                OFFICIAL_TERM -> set(OFFICIAL_TERM_START_YEAR, OFFICIAL_TERM_START_MONTH, OFFICIAL_TERM_START_DAY, 0, 0, 0)
-                "2026-2027-2" -> set(2027, Calendar.FEBRUARY, 22, 0, 0, 0)
-                else -> {
-                    val parts = term.split("-")
-                    val year = parts.firstOrNull()?.toIntOrNull() ?: get(Calendar.YEAR)
-                    if (parts.getOrNull(2) == "2") set(year + 1, Calendar.FEBRUARY, 1, 0, 0, 0)
-                    else set(year, Calendar.SEPTEMBER, 1, 0, 0, 0)
-                    while (get(Calendar.DAY_OF_WEEK) != Calendar.MONDAY) add(Calendar.DAY_OF_MONTH, 1)
-                }
-            }
-            set(Calendar.MILLISECOND, 0)
-        }
+        private fun termStartDate(term: String): Calendar = AcademicTermCalendar.startDate(term)
 
         private fun weekForDate(date: Calendar, start: Calendar): Int {
             val days = ((dayStart(date).timeInMillis - dayStart(start).timeInMillis) / 86_400_000L).toInt()

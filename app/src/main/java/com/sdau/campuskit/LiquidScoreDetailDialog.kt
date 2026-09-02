@@ -205,10 +205,10 @@ private fun LiquidScoreDetailDialog(
                 .padding(horizontal = 32.dp)
                 .fillMaxWidth()
                 .widthIn(max = 360.dp)
-                .clip(RoundedRectangle(20.dp))
+                .clip(RoundedRectangle(24.dp))
                 .drawBackdrop(
                     backdrop = backdrop,
-                    shape = { RoundedRectangle(20.dp) },
+                    shape = { RoundedRectangle(24.dp) },
                     effects = {
                         colorControls(
                             brightness = if (themeColors.isDark) 0f else 0.15f,

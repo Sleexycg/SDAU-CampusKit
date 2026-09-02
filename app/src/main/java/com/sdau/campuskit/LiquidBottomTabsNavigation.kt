@@ -210,6 +210,7 @@ internal class CampusLiquidBottomTabsView(
                             tabsCount = 4,
                             containerHeight = 54.dp,
                             indicatorHeight = 46.dp,
+                            indicatorInset = if (themeColors.isDark) 1.dp else 0.dp,
                             containerSurfaceAlpha = 0.34f,
                             modifier = Modifier
                                 .width(216.dp)
@@ -271,9 +272,13 @@ internal class LoginLiquidModeToggleView(
 
     init {
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        clipChildren = false
+        clipToPadding = false
         addView(
             ComposeView(context).apply {
                 setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                clipChildren = false
+                clipToPadding = false
                 setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
                 setCampusContent {
                     val themeColors = CampusComposeTheme.colors
@@ -307,7 +312,9 @@ internal class LoginLiquidModeToggleView(
                         containerSurfaceAlpha = 0.40f,
                         restingIndicatorAlpha = 0.10f,
                         indicatorShadowEnabled = false,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp)
                     ) {
                         LiquidBottomTab(onClick = { selectedIndexState = 0 }) {
                             LoginLiquidTabLabel("个人课表")
@@ -489,6 +496,7 @@ internal fun LiquidBottomTabs(
     contentPressedScale: Float = 1.2f,
     indicatorLensHorizontal: Dp = 10.dp,
     indicatorLensVertical: Dp = 14.dp,
+    indicatorInset: Dp = 0.dp,
     indicatorChromaticAberration: Boolean = true,
     containerSurfaceAlpha: Float? = null,
     restingIndicatorAlpha: Float = 0.10f,
@@ -532,10 +540,13 @@ internal fun LiquidBottomTabs(
         val density = androidx.compose.ui.platform.LocalDensity.current
         val horizontalInset = 4.dp
         val horizontalInsetPx = with(density) { horizontalInset.toPx() }
+        val indicatorInsetPx = with(density) { indicatorInset.toPx() }
         val tabWidth = with(density) {
             (constraints.maxWidth.toFloat() - horizontalInsetPx * 2f) / tabsCount
         }
         val tabWidthDp = with(density) { tabWidth.toDp() }
+        val indicatorWidth = (tabWidthDp - indicatorInset * 2f).coerceAtLeast(0.dp)
+        val indicatorVisualHeight = (indicatorHeight - indicatorInset * 2f).coerceAtLeast(0.dp)
         val offsetAnimation = remember { Animatable(0f) }
         val panelOffset by remember(density) {
             derivedStateOf {
@@ -710,9 +721,9 @@ internal fun LiquidBottomTabs(
                 .graphicsLayer {
                     translationX =
                         if (isLtr) horizontalInsetPx +
-                            indicatorValue * tabWidth + panelOffset
+                            indicatorValue * tabWidth + indicatorInsetPx + panelOffset
                         else constraints.maxWidth.toFloat() - horizontalInsetPx -
-                            (indicatorValue + 1f) * tabWidth + panelOffset
+                            (indicatorValue + 1f) * tabWidth + indicatorInsetPx + panelOffset
                 }
                 .then(interactiveHighlight.gestureModifier)
                 .then(dampedDragAnimation.modifier)
@@ -766,8 +777,8 @@ internal fun LiquidBottomTabs(
                         }
                     }
                 )
-                .height(indicatorHeight)
-                .width(tabWidthDp),
+                .height(indicatorVisualHeight)
+                .width(indicatorWidth),
             contentAlignment = Alignment.Center
         ) {}
     }
