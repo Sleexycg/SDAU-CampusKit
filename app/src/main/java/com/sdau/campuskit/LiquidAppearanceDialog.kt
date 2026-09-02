@@ -352,7 +352,7 @@ private fun AppearanceToggleRow(
                 )
             )
         }
-        ReferenceLiquidToggle(
+        LiquidSettingsToggle(
             selected = selected,
             onSelect = onSelect,
             backdrop = backdrop,
@@ -497,7 +497,7 @@ private fun AppearanceModeTabContent(label: String, dark: Boolean) {
 
 /** Ported from AndroidLiquidGlass-kmp/components/LiquidToggle.kt. */
 @Composable
-private fun ReferenceLiquidToggle(
+internal fun LiquidSettingsToggle(
     selected: () -> Boolean,
     onSelect: (Boolean) -> Unit,
     backdrop: Backdrop,

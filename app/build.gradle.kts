@@ -21,8 +21,8 @@ android {
         applicationId = "com.sdau.campuskit"
         minSdk = 26
         targetSdk = 34
-        versionCode = 11
-        versionName = "0.3.8 Beta"
+        versionCode = 12
+        versionName = "0.3.8"
         androidResources.localeFilters += arrayOf("zh", "en")
     }
 
@@ -78,6 +78,7 @@ dependencies {
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.core:core-ktx:1.13.0")
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("org.jetbrains.compose.foundation:foundation:1.12.0")
     implementation("org.jetbrains.compose.ui:ui:1.12.0")
     implementation("io.github.kyant0:backdrop:2.0.1")

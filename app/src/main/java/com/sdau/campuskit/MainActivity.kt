@@ -239,6 +239,7 @@ class MainActivity : ComponentActivity() {
     private var mainSectionTransitionGeneration = 0
     private var detailOverlay: LiquidCourseDialogView? = null
     private var scoreTermOverlay: LiquidScoreTermDropdownView? = null
+    private var scoreReminderOverlay: LiquidScoreReminderDialogView? = null
     private val scoreTermSelectorExpanded = mutableStateOf(false)
     private var scoreDetailOverlay: LiquidScoreDetailDialogView? = null
     private var emptyRoomFilterOverlay: LiquidPickerDialogView? = null
@@ -263,6 +264,7 @@ class MainActivity : ComponentActivity() {
     private var pickerDialogCapturePending = false
     private var actionMenuCapturePending = false
     private var scoreTermMenuCapturePending = false
+    private var scoreReminderCapturePending = false
     private var scoreDetailCapturePending = false
     private var courseDialogCapturePending = false
     private var emptyRoomFilterCapturePending = false
@@ -298,8 +300,10 @@ class MainActivity : ComponentActivity() {
         }
     }
     private var pendingPushEnable = false
+    private var pendingScoreUpdateEnable = false
     private var pendingExactAlarmEnable = false
     private var bottomNavigation: CampusLiquidBottomTabsView? = null
+    private val scoreUpdatesEnabled = mutableStateOf(false)
     private var scoresLoading = false
     private var scoreExporting = false
     private var scheduleExporting = false
@@ -372,6 +376,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(state)
         CampusThemeController.initialize(this)
         pushEnabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_PUSH_ENABLED, false)
+        scoreUpdatesEnabled.value = ScoreUpdateScheduler.isEnabled(this)
+        ScoreUpdateScheduler.restoreIfEnabled(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(true)
         }
@@ -801,6 +807,9 @@ class MainActivity : ComponentActivity() {
         scoreTermOverlay = null
         scoreTermSelectorExpanded.value = false
         scoreTermMenuCapturePending = false
+        scoreReminderOverlay?.releaseSnapshot()
+        scoreReminderOverlay = null
+        scoreReminderCapturePending = false
         scoreDetailOverlay?.releaseSnapshot()
         scoreDetailOverlay = null
         emptyRoomFilterOverlay?.releaseSnapshot()
@@ -2759,7 +2768,9 @@ class MainActivity : ComponentActivity() {
             pageBackgroundScrim = customBackgroundScrimColor(),
             textPalette = scheduleTextPalette,
             termSelectorExpanded = scoreTermSelectorExpanded,
+            scoreUpdatesEnabled = scoreUpdatesEnabled,
             onTermClick = ::requestScoreTermPicker,
+            onScoreReminderClick = ::showScoreReminderDialog,
             onScoreClick = ::showScoreDetail,
             onExport = { exportScoreImage(result.term) }
         )
@@ -3082,7 +3093,20 @@ class MainActivity : ComponentActivity() {
             termSelectorExpanded = scoreTermSelectorExpanded,
             onTermClick = ::requestScoreTermPicker
         )
-        header.addView(selector, LinearLayout.LayoutParams(-2, -2))
+        val actions = horizontalLayout().apply { gravity = Gravity.CENTER_VERTICAL }
+        if (!viewingPublicSchedule) {
+            actions.addView(
+                createScoreReminderButtonView(
+                    context = this,
+                    textPalette = scheduleTextPalette,
+                    scoreUpdatesEnabled = scoreUpdatesEnabled,
+                    onClick = ::showScoreReminderDialog
+                ),
+                LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(7) }
+            )
+        }
+        actions.addView(selector, LinearLayout.LayoutParams(-2, -2))
+        header.addView(actions, LinearLayout.LayoutParams(-2, -2))
         body.addView(header, spacedParams(dp(18)))
     }
 
@@ -3221,6 +3245,47 @@ class MainActivity : ComponentActivity() {
             overlay.releaseSnapshot()
             afterDismiss?.invoke()
         }
+    }
+
+    private fun showScoreReminderDialog() {
+        if (
+            viewingPublicSchedule || scoreReminderOverlay != null ||
+            scoreReminderCapturePending
+        ) return
+        scoreReminderCapturePending = true
+        captureUpdateBackdrop { pageSnapshot ->
+            scoreReminderCapturePending = false
+            if (isFinishing || isDestroyed || scoreReminderOverlay != null) {
+                pageSnapshot?.takeUnless(Bitmap::isRecycled)?.recycle()
+                return@captureUpdateBackdrop
+            }
+            val dialog = LiquidScoreReminderDialogView(
+                context = this,
+                pageSnapshot = pageSnapshot,
+                enabled = scoreUpdatesEnabled,
+                statusProvider = { ScoreUpdateScheduler.queryStatus(this) },
+                onToggle = ::setScoreUpdateMonitoringEnabled,
+                onDismiss = ::hideScoreReminderDialog
+            )
+            pageHost.addView(dialog, matchParentParams())
+            scoreReminderOverlay = dialog
+            dialog.alpha = 0f
+            dialog.animate().alpha(1f).setDuration(180L).start()
+        }
+    }
+
+    private fun hideScoreReminderDialog(afterDismiss: (() -> Unit)? = null) {
+        val overlay = scoreReminderOverlay
+        if (overlay == null) {
+            afterDismiss?.invoke()
+            return
+        }
+        overlay.animate().alpha(0f).setDuration(140L).withEndAction {
+            pageHost.removeView(overlay)
+            overlay.releaseSnapshot()
+            if (scoreReminderOverlay === overlay) scoreReminderOverlay = null
+            afterDismiss?.invoke()
+        }.start()
     }
 
     private fun buildScheduleHeader(): View {
@@ -5359,9 +5424,57 @@ class MainActivity : ComponentActivity() {
         CourseReminderScheduler.cancel(this)
     }
 
+    private fun setScoreUpdateMonitoringEnabled(enabled: Boolean) {
+        if (!enabled) {
+            pendingScoreUpdateEnable = false
+            ScoreUpdateScheduler.disable(this)
+            scoreUpdatesEnabled.value = false
+            return
+        }
+
+        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val account = preferences.getString(KEY_ACCOUNT, "").orEmpty().trim()
+        val password = preferences.getString(KEY_PASSWORD, "").orEmpty()
+        if (account.isBlank() || password.isBlank()) {
+            scoreUpdatesEnabled.value = false
+            showLiquidToast(
+                message = "请先登录后开启成绩提醒",
+                visual = LiquidToastVisual.ERROR,
+                durationMillis = 2_600L
+            )
+            return
+        }
+
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingScoreUpdateEnable = true
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                NOTIFICATION_PERMISSION_REQUEST
+            )
+            return
+        }
+        completeScoreUpdateMonitoringEnable()
+    }
+
+    private fun completeScoreUpdateMonitoringEnable() {
+        pendingScoreUpdateEnable = false
+        ScoreUpdateScheduler.enable(this)
+        scoreUpdatesEnabled.value = true
+        ScoreUpdateNotification.showTest(this)
+    }
+
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == NOTIFICATION_PERMISSION_REQUEST && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+        if (requestCode != NOTIFICATION_PERMISSION_REQUEST) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            if (pendingScoreUpdateEnable) {
+                completeScoreUpdateMonitoringEnable()
+                return
+            }
             if (pendingPushEnable) {
                 pendingPushEnable = false
                 continueEnablingPushNotifications()
@@ -5369,6 +5482,15 @@ class MainActivity : ComponentActivity() {
                 return
             }
             scheduleSystemCourseReminder()
+        } else if (pendingScoreUpdateEnable) {
+            pendingScoreUpdateEnable = false
+            ScoreUpdateScheduler.disable(this)
+            scoreUpdatesEnabled.value = false
+            showLiquidToast(
+                message = "未获得通知权限，成绩提醒无法开启",
+                visual = LiquidToastVisual.ERROR,
+                durationMillis = 2_800L
+            )
         }
     }
 
@@ -6459,6 +6581,10 @@ class MainActivity : ComponentActivity() {
         }
         if (appearanceOverlay != null) {
             hideAppearanceDialog()
+            return
+        }
+        if (scoreReminderOverlay != null) {
+            hideScoreReminderDialog()
             return
         }
         if (refreshScheduleConfirmOverlay != null) {
@@ -8631,6 +8757,15 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         hideSystemNavigationBar()
+        if (
+            scoreUpdatesEnabled.value &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            ScoreUpdateScheduler.disable(this)
+            scoreUpdatesEnabled.value = false
+        }
         val automaticMode = ScheduleTimePolicy.currentMode()
         if (automaticMode != scheduleMode) {
             scheduleMode = automaticMode
@@ -8690,6 +8825,8 @@ class MainActivity : ComponentActivity() {
         updateDialogView = null
         scoreDetailOverlay?.releaseSnapshot()
         scoreDetailOverlay = null
+        scoreReminderOverlay?.releaseSnapshot()
+        scoreReminderOverlay = null
         detailOverlay?.releaseSnapshot()
         detailOverlay = null
         emptyRoomFilterOverlay?.releaseSnapshot()

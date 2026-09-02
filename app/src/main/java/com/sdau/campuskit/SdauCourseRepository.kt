@@ -278,6 +278,34 @@ class SdauCourseRepository {
         }
     }
 
+    private fun scoreListPath(selectedTerm: String): String {
+        val parameters = linkedMapOf(
+            "pageNum" to "1",
+            "pageSize" to "200",
+            "kksj" to selectedTerm,
+            "kcxz" to "",
+            "kcsx" to "",
+            "kcmc" to "",
+            "xsfs" to "all",
+            "sfxsbcxq" to "1"
+        )
+        return "/kscj/cjcx_list?" + parameters.entries.joinToString("&") {
+            URLEncoder.encode(it.key, "UTF-8") + "=" + URLEncoder.encode(it.value, "UTF-8")
+        }
+    }
+
+    /** Lightweight list-only query used by the background new-score monitor. */
+    fun queryScoreRecords(account: String, password: String, term: String): List<RemoteScore> {
+        login(account, password)
+        val formPath = "/kscj/cjcx_frm"
+        requestStage("打开成绩查询页") { request(formPath, "GET", null) }
+        val referer = "$BASE_URL$formPath"
+        val listBody = requestStage("读取课程成绩") {
+            request(scoreListPath(term), "GET", null, referer)
+        }
+        return parseScoreRecords(listBody, term)
+    }
+
     fun queryScores(
         account: String,
         password: String,
@@ -288,26 +316,11 @@ class SdauCourseRepository {
         val formPath = "/kscj/cjcx_frm"
         requestStage("打开成绩查询页") { request(formPath, "GET", null) }
         val referer = "$BASE_URL$formPath"
-        fun scorePath(selectedTerm: String): String {
-            val parameters = linkedMapOf(
-                "pageNum" to "1",
-                "pageSize" to "200",
-                "kksj" to selectedTerm,
-                "kcxz" to "",
-                "kcsx" to "",
-                "kcmc" to "",
-                "xsfs" to "all",
-                "sfxsbcxq" to "1"
-            )
-            return "/kscj/cjcx_list?" + parameters.entries.joinToString("&") {
-                URLEncoder.encode(it.key, "UTF-8") + "=" + URLEncoder.encode(it.value, "UTF-8")
-            }
-        }
         val listBody = requestStage("读取课程成绩") {
-            request(scorePath(term), "GET", null, referer)
+            request(scoreListPath(term), "GET", null, referer)
         }
         val summaryBody = runCatching {
-            request(scorePath(""), "GET", null, referer)
+            request(scoreListPath(""), "GET", null, referer)
         }.getOrDefault("{}")
         val selectedRecords = parseScoreRecords(listBody, term)
         val allTermRecords = allTerms.distinct().flatMap { scoreTerm ->
@@ -316,7 +329,7 @@ class SdauCourseRepository {
             } else {
                 parseScoreRecords(
                     requestStage("读取 $scoreTerm 学期成绩") {
-                        request(scorePath(scoreTerm), "GET", null, referer)
+                        request(scoreListPath(scoreTerm), "GET", null, referer)
                     },
                     scoreTerm
                 )

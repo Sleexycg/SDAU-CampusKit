@@ -31,7 +31,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -117,7 +116,9 @@ internal fun createScoreLiquidScrollPageView(
     pageBackgroundScrim: Int,
     textPalette: ScheduleTextPalette,
     termSelectorExpanded: State<Boolean>,
+    scoreUpdatesEnabled: State<Boolean>,
     onTermClick: (android.graphics.Rect) -> Unit,
+    onScoreReminderClick: () -> Unit,
     onScoreClick: (RemoteScore) -> Unit,
     onExport: () -> Unit
 ): View = composeHostView(context) {
@@ -128,9 +129,24 @@ internal fun createScoreLiquidScrollPageView(
         pageBackgroundScrim = pageBackgroundScrim,
         textPalette = textPalette,
         termSelectorExpanded = termSelectorExpanded.value,
+        scoreUpdatesEnabled = scoreUpdatesEnabled.value,
         onTermClick = onTermClick,
+        onScoreReminderClick = onScoreReminderClick,
         onScoreClick = onScoreClick,
         onExport = onExport
+    )
+}
+
+internal fun createScoreReminderButtonView(
+    context: Context,
+    textPalette: ScheduleTextPalette,
+    scoreUpdatesEnabled: State<Boolean>,
+    onClick: () -> Unit
+): View = composeHostView(context) {
+    ScoreReminderButton(
+        enabled = scoreUpdatesEnabled.value,
+        textPalette = textPalette,
+        onClick = onClick
     )
 }
 
@@ -276,7 +292,9 @@ private fun ScoreLiquidScrollPage(
     pageBackgroundScrim: Int,
     textPalette: ScheduleTextPalette,
     termSelectorExpanded: Boolean,
+    scoreUpdatesEnabled: Boolean,
     onTermClick: (android.graphics.Rect) -> Unit,
+    onScoreReminderClick: () -> Unit,
     onScoreClick: (RemoteScore) -> Unit,
     onExport: () -> Unit
 ) {
@@ -322,13 +340,23 @@ private fun ScoreLiquidScrollPage(
                         shadow = textShadow
                     )
                 )
-                ScoreTermSelector(
-                    term = result.term,
-                    backdrop = backdrop,
-                    expanded = termSelectorExpanded,
-                    textPalette = textPalette,
-                    onClick = onTermClick
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    ScoreReminderButton(
+                        enabled = scoreUpdatesEnabled,
+                        textPalette = textPalette,
+                        onClick = onScoreReminderClick
+                    )
+                    ScoreTermSelector(
+                        term = result.term,
+                        backdrop = backdrop,
+                        expanded = termSelectorExpanded,
+                        textPalette = textPalette,
+                        onClick = onTermClick
+                    )
+                }
             }
 
             Row(
@@ -472,6 +500,37 @@ private fun ScoreLiquidScrollPage(
         ) {
             SurfaceLiquidExportButton(backdrop = backdrop, onClick = onExport)
         }
+    }
+}
+
+@Composable
+private fun ScoreReminderButton(
+    enabled: Boolean,
+    textPalette: ScheduleTextPalette,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val themeColors = CampusComposeTheme.colors
+    Row(
+        modifier
+            .clickable(
+                interactionSource = null,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick
+            )
+            .size(38.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Image(
+            painter = painterResource(R.drawable.ic_push_on),
+            contentDescription = if (enabled) "成绩更新提醒已开启" else "成绩更新提醒已关闭",
+            modifier = Modifier.size(22.dp),
+            colorFilter = ColorFilter.tint(
+                if (enabled) themeColors.accent else Color(textPalette.primary)
+            )
+        )
     }
 }
 
