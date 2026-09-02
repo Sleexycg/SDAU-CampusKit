@@ -302,6 +302,7 @@ class MainActivity : ComponentActivity() {
     private var pendingPushEnable = false
     private var pendingScoreUpdateEnable = false
     private var pendingExactAlarmEnable = false
+    private var pendingScoreExactAlarmEnable = false
     private var bottomNavigation: CampusLiquidBottomTabsView? = null
     private val scoreUpdatesEnabled = mutableStateOf(false)
     private var scoresLoading = false
@@ -376,8 +377,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(state)
         CampusThemeController.initialize(this)
         pushEnabled = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_PUSH_ENABLED, false)
-        scoreUpdatesEnabled.value = ScoreUpdateScheduler.isEnabled(this)
         ScoreUpdateScheduler.restoreIfEnabled(this)
+        scoreUpdatesEnabled.value = ScoreUpdateScheduler.isEnabled(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(true)
         }
@@ -5382,9 +5383,15 @@ class MainActivity : ComponentActivity() {
                 )
             )
         } catch (_: ActivityNotFoundException) {
+            val requestedForScoreUpdates = pendingScoreExactAlarmEnable
             pendingExactAlarmEnable = false
+            pendingScoreExactAlarmEnable = false
             showLiquidToast(
-                message = "无法打开闹钟权限设置，课程提醒未开启",
+                message = if (requestedForScoreUpdates) {
+                    "无法打开闹钟权限设置，成绩提醒未开启"
+                } else {
+                    "无法打开闹钟权限设置，课程提醒未开启"
+                },
                 visual = LiquidToastVisual.BELL_OFF,
                 durationMillis = 2_800L
             )
@@ -5427,6 +5434,7 @@ class MainActivity : ComponentActivity() {
     private fun setScoreUpdateMonitoringEnabled(enabled: Boolean) {
         if (!enabled) {
             pendingScoreUpdateEnable = false
+            pendingScoreExactAlarmEnable = false
             ScoreUpdateScheduler.disable(this)
             scoreUpdatesEnabled.value = false
             return
@@ -5462,9 +5470,34 @@ class MainActivity : ComponentActivity() {
 
     private fun completeScoreUpdateMonitoringEnable() {
         pendingScoreUpdateEnable = false
-        ScoreUpdateScheduler.enable(this)
-        scoreUpdatesEnabled.value = true
-        ScoreUpdateNotification.showTest(this)
+        if (!canScheduleExactCourseReminders()) {
+            pendingScoreExactAlarmEnable = true
+            ScoreUpdateScheduler.disable(this)
+            scoreUpdatesEnabled.value = false
+            showLiquidToast(
+                message = "请授予“闹钟和提醒”权限",
+                visual = LiquidToastVisual.BELL_OFF,
+                durationMillis = 2_400L
+            )
+            requestExactAlarmAccess()
+            return
+        }
+        activateScoreUpdateMonitoring()
+    }
+
+    private fun activateScoreUpdateMonitoring() {
+        pendingScoreExactAlarmEnable = false
+        val enabled = ScoreUpdateScheduler.enable(this)
+        scoreUpdatesEnabled.value = enabled
+        if (enabled) {
+            ScoreUpdateNotification.showTest(this)
+        } else {
+            showLiquidToast(
+                message = "未获得闹钟权限，成绩提醒无法开启",
+                visual = LiquidToastVisual.BELL_OFF,
+                durationMillis = 2_800L
+            )
+        }
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
@@ -8765,6 +8798,30 @@ class MainActivity : ComponentActivity() {
         ) {
             ScoreUpdateScheduler.disable(this)
             scoreUpdatesEnabled.value = false
+        }
+        if (pendingScoreExactAlarmEnable) {
+            pendingScoreExactAlarmEnable = false
+            if (canScheduleExactCourseReminders()) {
+                activateScoreUpdateMonitoring()
+            } else {
+                ScoreUpdateScheduler.disable(this)
+                scoreUpdatesEnabled.value = false
+                showLiquidToast(
+                    message = "未获得闹钟权限，成绩提醒无法开启",
+                    visual = LiquidToastVisual.BELL_OFF,
+                    durationMillis = 2_800L
+                )
+            }
+        } else if (scoreUpdatesEnabled.value && !canScheduleExactCourseReminders()) {
+            ScoreUpdateScheduler.disable(this)
+            scoreUpdatesEnabled.value = false
+            showLiquidToast(
+                message = "闹钟权限已关闭，成绩提醒已停止",
+                visual = LiquidToastVisual.BELL_OFF,
+                durationMillis = 2_800L
+            )
+        } else if (scoreUpdatesEnabled.value) {
+            ScoreUpdateScheduler.restoreIfEnabled(this)
         }
         val automaticMode = ScheduleTimePolicy.currentMode()
         if (automaticMode != scheduleMode) {

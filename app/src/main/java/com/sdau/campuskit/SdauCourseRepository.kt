@@ -1122,7 +1122,7 @@ class SdauCourseRepository {
             val bytes = stream.use { it.readBytes() }
             val charset = responseCharset(connection.contentType)
             val body = bytes.toString(charset)
-            if (status in RETRYABLE_HTTP_STATUSES) {
+            if (status in RETRYABLE_HTTP_STATUSES || status in 500..599) {
                 throw IOException("教务系统暂时不可用（HTTP $status）")
             }
             if (status !in 200..299) throw IllegalStateException("教务系统返回 HTTP $status")
@@ -1165,7 +1165,7 @@ class SdauCourseRepository {
     companion object {
         private val COOKIE_HANDLER_LOCK = Any()
         private const val REQUEST_ATTEMPTS = 3
-        private val RETRYABLE_HTTP_STATUSES = setOf(408, 425, 429, 500, 502, 503, 504)
+        private val RETRYABLE_HTTP_STATUSES = setOf(408, 425, 429)
         private val PUBLIC_SCHEDULE_CONTAINER_KEYS = setOf("rows", "data", "list", "result", "records")
         private const val BASE_URL = "https://jw.sdau.edu.cn"
         private const val PUBLIC_SCHEDULE_MIRROR_BASE = "https://gitee.com/sleexy/onlinedata/raw/master"

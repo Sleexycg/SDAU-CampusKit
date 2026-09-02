@@ -36,6 +36,7 @@ object CourseNotification {
             enableVibration(false)
             vibrationPattern = longArrayOf(0L)
             setShowBadge(true)
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
         }
         manager.createNotificationChannel(channel)
     }
@@ -61,6 +62,7 @@ object CourseNotification {
             .setSubText("课程提醒")
             .setAutoCancel(true)
             .setCategory(Notification.CATEGORY_REMINDER)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
             .build()
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(NOTIFICATION_ID, notification)
@@ -94,6 +96,7 @@ class CourseReminderReceiver : BroadcastReceiver() {
 class CourseReminderRestoreReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         CourseReminderScheduler.scheduleNext(context)
+        ScoreUpdateScheduler.restoreIfEnabled(context, forceAlarm = true)
     }
 }
 
