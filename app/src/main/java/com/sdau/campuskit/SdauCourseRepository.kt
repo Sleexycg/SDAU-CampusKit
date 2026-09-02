@@ -2,6 +2,7 @@ package com.sdau.campuskit
 
 import android.util.JsonReader
 import android.util.JsonToken
+import org.jsoup.Jsoup
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -21,6 +22,7 @@ import java.security.DigestInputStream
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.Locale
+import kotlin.math.roundToInt
 
 data class RemoteCourse(
     val day: Int,
@@ -158,6 +160,38 @@ data class RemoteEmptyRoomResult(
     val weekday: Int,
     val sectionCode: String,
     val rooms: List<String>
+)
+
+data class RemoteTrainingPlanSubject(
+    val term: String,
+    val courseCode: String,
+    val courseName: String,
+    val credit: String,
+    val courseType: String,
+    val categoryCode: String,
+    val status: String,
+    val score: String
+)
+
+data class RemoteTrainingPlanItem(
+    val category: String,
+    val requiredCredits: String,
+    val completedCredits: String,
+    val currentCredits: String,
+    val remainingCredits: String,
+    val subjects: List<RemoteTrainingPlanSubject> = emptyList()
+)
+
+data class RemoteTrainingPlanSummary(
+    val requiredCredits: String,
+    val completedCredits: String,
+    val currentCredits: String,
+    val remainingCredits: String
+)
+
+data class RemoteTrainingPlanResult(
+    val items: List<RemoteTrainingPlanItem>,
+    val summary: RemoteTrainingPlanSummary
 )
 
 private data class RemoteMeeting(val day: Int, val startSlot: Int, val slotCount: Int, val weeks: String)
@@ -354,6 +388,16 @@ class SdauCourseRepository {
             request(earlyPath, "GET", null)
         }
         return parseEarlyExams(earlyBody)
+    }
+
+    fun queryTrainingPlan(account: String, password: String): RemoteTrainingPlanResult {
+        login(account, password)
+        val path = "/xxwcqk/xxwcqkOnkctx.do?isdb=0"
+        val body = requestStage("读取培养方案") { request(path, "GET", null) }
+        if (isLoginPage(body)) {
+            throw IllegalStateException("登录状态已失效，请重新登录")
+        }
+        return parseTrainingPlan(body)
     }
 
     fun queryEmptyRooms(
@@ -802,6 +846,309 @@ class SdauCourseRepository {
             (body.contains("LoginToXk") && body.contains("userAccount"))
     }
 
+    private fun parseTrainingPlan(body: String): RemoteTrainingPlanResult {
+        val parsedItems = mutableListOf<MutableTrainingPlanItem>()
+        val categoryLookup = linkedMapOf<String, MutableTrainingPlanItem>()
+        val unresolvedBkSubjects = mutableListOf<RemoteTrainingPlanSubject>()
+        var summary: RemoteTrainingPlanSummary? = null
+        var currentCategory: String? = null
+
+        val document = Jsoup.parse(body)
+        document.select(".list-tr").forEach { row ->
+            val cells = row.select(".list-td .list-td-cell")
+                .map { cleanTrainingPlanText(it.text()) }
+            if (cells.size < 5) return@forEach
+
+            val firstCell = cells.first().trim()
+            if (row.hasClass("total-tr") || firstCell == "合计") {
+                summary = RemoteTrainingPlanSummary(
+                    requiredCredits = cells.getOrElse(1) { "0" },
+                    completedCredits = cells.getOrElse(2) { "0" },
+                    currentCredits = cells.getOrElse(3) { "0" },
+                    remainingCredits = cells.getOrElse(4) { "0" }
+                )
+                return@forEach
+            }
+
+            val category = canonicalTrainingPlanCategory(
+                cleanTrainingPlanText(row.selectFirst(".jClass-item")?.text().orEmpty())
+            )
+            if (category.isNotBlank() && !isTrainingPlanTerm(category)) {
+                val item = MutableTrainingPlanItem(
+                    category = category,
+                    requiredCredits = cells.getOrElse(1) { "0" },
+                    completedCredits = cells.getOrElse(2) { "0" },
+                    currentCredits = cells.getOrElse(3) { "0" },
+                    remainingCredits = cells.getOrElse(4) { "0" }
+                )
+                parsedItems += item
+                categoryLookup[category] = item
+                currentCategory = category
+                return@forEach
+            }
+
+            if (isTrainingPlanTerm(firstCell) && cells.size >= 8) {
+                val categoryCode = cells[5].trim().uppercase(Locale.ROOT)
+                val subject = RemoteTrainingPlanSubject(
+                    term = firstCell,
+                    courseCode = cells[1],
+                    courseName = cells[2],
+                    credit = cells[3].filter { it.isDigit() || it == '.' }.ifEmpty { "-" },
+                    courseType = cells[4],
+                    categoryCode = categoryCode,
+                    status = cells[6],
+                    score = cells[7]
+                )
+                val inferredCategory = trainingPlanCategoryForCourse(
+                    courseType = cells[4],
+                    code = categoryCode,
+                    courseName = cells[2]
+                )
+                val orderedBkCategory = currentCategory
+                    ?.takeIf { it in BK_TRAINING_PLAN_CATEGORIES && categoryLookup.containsKey(it) }
+                when {
+                    categoryCode == "BK" && orderedBkCategory != null -> {
+                        categoryLookup[orderedBkCategory]?.subjects?.let { subjects ->
+                            if (subject !in subjects) subjects += subject
+                        }
+                    }
+                    inferredCategory != null -> {
+                        categoryLookup[inferredCategory]?.subjects?.let { subjects ->
+                            if (subject !in subjects) subjects += subject
+                        }
+                    }
+                    categoryCode == "BK" -> {
+                        if (subject !in unresolvedBkSubjects) unresolvedBkSubjects += subject
+                    }
+                    currentCategory != null -> {
+                        categoryLookup[currentCategory]?.subjects?.let { subjects ->
+                            if (subject !in subjects) subjects += subject
+                        }
+                    }
+                }
+            }
+        }
+
+        if (parsedItems.isEmpty()) {
+            throw IllegalStateException("未能解析培养方案，教务系统页面格式可能已变化")
+        }
+        assignUnresolvedBkTrainingPlanSubjects(categoryLookup, unresolvedBkSubjects)
+        val immutableItems = parsedItems.map { item ->
+            RemoteTrainingPlanItem(
+                category = item.category,
+                requiredCredits = item.requiredCredits,
+                completedCredits = item.completedCredits,
+                currentCredits = item.currentCredits,
+                remainingCredits = item.remainingCredits,
+                subjects = item.subjects.toList()
+            )
+        }
+        val resolvedSummary = summary ?: RemoteTrainingPlanSummary(
+            requiredCredits = formatTrainingPlanCredit(immutableItems.sumOf { it.requiredCredits.toDoubleOrNull() ?: 0.0 }),
+            completedCredits = formatTrainingPlanCredit(immutableItems.sumOf { it.completedCredits.toDoubleOrNull() ?: 0.0 }),
+            currentCredits = formatTrainingPlanCredit(immutableItems.sumOf { it.currentCredits.toDoubleOrNull() ?: 0.0 }),
+            remainingCredits = formatTrainingPlanCredit(immutableItems.sumOf { it.remainingCredits.toDoubleOrNull() ?: 0.0 })
+        )
+        return RemoteTrainingPlanResult(immutableItems, resolvedSummary)
+    }
+
+    /**
+     * 教务系统把学科基础、通识必修和专业核心的课程明细统一标记为 BK，
+     * 正常情况下优先使用 HTML 中的类别边界直接归类。只有页面缺少类别边界时，
+     * 才按照网页类别顺序、课程顺序和各状态学分约束进行兜底分配。
+     */
+    private fun assignUnresolvedBkTrainingPlanSubjects(
+        categoryLookup: Map<String, MutableTrainingPlanItem>,
+        unresolvedSubjects: List<RemoteTrainingPlanSubject>
+    ) {
+        if (unresolvedSubjects.isEmpty()) return
+        val bkCategories = categoryLookup.values
+            .filter { it.category in BK_TRAINING_PLAN_CATEGORIES }
+        if (bkCategories.isEmpty()) return
+
+        assignTrainingPlanSubjectsByCredit(
+            categories = bkCategories,
+            subjects = unresolvedSubjects.filter {
+                trainingPlanSubjectBucket(it) == TrainingPlanSubjectBucket.COMPLETED
+            },
+            bucket = TrainingPlanSubjectBucket.COMPLETED,
+            targetCredits = { it.completedCredits }
+        )
+        assignTrainingPlanSubjectsByCredit(
+            categories = bkCategories,
+            subjects = unresolvedSubjects.filter {
+                trainingPlanSubjectBucket(it) == TrainingPlanSubjectBucket.CURRENT
+            },
+            bucket = TrainingPlanSubjectBucket.CURRENT,
+            targetCredits = { it.currentCredits }
+        )
+        assignTrainingPlanSubjectsByCredit(
+            categories = bkCategories,
+            subjects = unresolvedSubjects.filter {
+                trainingPlanSubjectBucket(it) == TrainingPlanSubjectBucket.UNCOMPLETED
+            },
+            bucket = TrainingPlanSubjectBucket.UNCOMPLETED,
+            targetCredits = { it.remainingCredits }
+        )
+    }
+
+    private fun assignTrainingPlanSubjectsByCredit(
+        categories: List<MutableTrainingPlanItem>,
+        subjects: List<RemoteTrainingPlanSubject>,
+        bucket: TrainingPlanSubjectBucket,
+        targetCredits: (MutableTrainingPlanItem) -> String
+    ) {
+        if (subjects.isEmpty()) return
+        val pool = subjects.toMutableList()
+        val targets = categories.mapNotNull { category ->
+            val expected = trainingPlanCreditUnits(targetCredits(category))
+            val assigned = category.subjects
+                .filter { trainingPlanSubjectBucket(it) == bucket }
+                .sumOf { trainingPlanCreditUnits(it.credit) }
+            val remaining = (expected - assigned).coerceAtLeast(0)
+            if (remaining > 0) category to remaining else null
+        }
+
+        targets.forEach { (category, targetUnits) ->
+            val selected = findTrainingPlanCreditSubsetInPageOrder(pool, targetUnits)
+            selected.forEach { subject ->
+                if (subject !in category.subjects) category.subjects += subject
+            }
+            pool.removeAll(selected.toSet())
+        }
+    }
+
+    private fun findTrainingPlanCreditSubsetInPageOrder(
+        subjects: List<RemoteTrainingPlanSubject>,
+        targetUnits: Int
+    ): List<RemoteTrainingPlanSubject> {
+        if (targetUnits <= 0 || subjects.isEmpty()) return emptyList()
+        var accumulatedUnits = 0
+        subjects.forEachIndexed { index, subject ->
+            accumulatedUnits += trainingPlanCreditUnits(subject.credit)
+            if (accumulatedUnits == targetUnits) {
+                return subjects.subList(0, index + 1).toList()
+            }
+            if (accumulatedUnits > targetUnits) return@forEachIndexed
+        }
+        return findTrainingPlanCreditSubset(subjects, targetUnits)
+    }
+
+    private fun findTrainingPlanCreditSubset(
+        subjects: List<RemoteTrainingPlanSubject>,
+        targetUnits: Int
+    ): List<RemoteTrainingPlanSubject> {
+        if (targetUnits <= 0 || subjects.isEmpty()) return emptyList()
+        val paths = arrayOfNulls<List<Int>>(targetUnits + 1)
+        paths[0] = emptyList()
+        subjects.forEachIndexed { index, subject ->
+            val units = trainingPlanCreditUnits(subject.credit)
+            if (units <= 0 || units > targetUnits) return@forEachIndexed
+            for (sum in targetUnits downTo units) {
+                if (paths[sum] == null && paths[sum - units] != null) {
+                    paths[sum] = paths[sum - units].orEmpty() + index
+                }
+            }
+        }
+        return paths[targetUnits].orEmpty().map(subjects::get)
+    }
+
+    private fun trainingPlanCreditUnits(value: String): Int =
+        ((value.toDoubleOrNull() ?: 0.0) * 10.0).roundToInt()
+
+    private fun trainingPlanSubjectBucket(subject: RemoteTrainingPlanSubject): TrainingPlanSubjectBucket {
+        val status = cleanTrainingPlanText(subject.status)
+        val score = cleanTrainingPlanText(subject.score)
+        return when {
+            status.contains("正修") || status.contains("在修") ||
+                status.contains("修读中") || status.contains("在读") -> TrainingPlanSubjectBucket.CURRENT
+            status.contains("已修") || status.contains("已完成") ||
+                status.contains("通过") || status.contains("及格") ||
+                hasPublishedTrainingPlanScore(score) -> TrainingPlanSubjectBucket.COMPLETED
+            else -> TrainingPlanSubjectBucket.UNCOMPLETED
+        }
+    }
+
+    private fun hasPublishedTrainingPlanScore(score: String): Boolean =
+        score.toDoubleOrNull() != null || score in setOf("优秀", "良好", "中等", "及格", "合格", "通过")
+
+    private fun trainingPlanCategoryForCode(code: String): String? = when (code) {
+        "XF" -> "专业方向课"
+        "BS" -> "实践教学环节"
+        "XY" -> "艺术审美类"
+        "XZ", "XR", "XG" -> "耕读教育类"
+        "XT" -> "体育健康类"
+        "XD" -> "四史教育类"
+        else -> null
+    }
+
+    private fun trainingPlanCategoryForCourse(
+        courseType: String,
+        code: String,
+        courseName: String
+    ): String? {
+        val normalizedType = cleanTrainingPlanText(courseType)
+        val normalizedName = cleanTrainingPlanText(courseName)
+        return when {
+            normalizedType.contains("学科基础") -> "学科基础课组"
+            (normalizedType.contains("通识") || normalizedType.contains("公共")) &&
+                normalizedType.contains("必修") -> "通识必修课"
+            normalizedType.contains("实践教学") -> "实践教学环节"
+            normalizedType.contains("专业方向") -> "专业方向课"
+            normalizedType.contains("专业") &&
+                (normalizedType.contains("核心") || normalizedType.contains("必修")) -> "专业核心课"
+            normalizedType.contains("艺术审美") -> "艺术审美类"
+            normalizedType.contains("耕读教育") -> "耕读教育类"
+            normalizedType.contains("体育健康") -> "体育健康类"
+            normalizedType.contains("四史教育") -> "四史教育类"
+            code == "BK" && isGeneralMandatoryTrainingPlanCourse(normalizedName) -> "通识必修课"
+            else -> trainingPlanCategoryForCode(code)
+        }
+    }
+
+    private fun isGeneralMandatoryTrainingPlanCourse(courseName: String): Boolean {
+        val keywords = listOf(
+            "计算机导论",
+            "思想道德", "中国近现代史", "马克思主义", "毛泽东思想", "习近平新时代",
+            "形势与政策", "大学英语", "大学体育", "普通体育课", "军事理论", "军事技能",
+            "心理健康", "职业生涯", "就业指导", "就业教育", "创新创业", "劳动教育",
+            "国家安全", "安全教育", "通识"
+        )
+        return keywords.any(courseName::contains) || courseName.startsWith("体育")
+    }
+
+    private fun canonicalTrainingPlanCategory(value: String): String {
+        val normalized = cleanTrainingPlanText(value)
+        return when {
+            normalized.contains("学科基础") -> "学科基础课组"
+            normalized.contains("通识") && normalized.contains("必修") -> "通识必修课"
+            normalized.contains("实践教学") -> "实践教学环节"
+            normalized.contains("专业") &&
+                (normalized.contains("核心") || normalized.contains("必修")) -> "专业核心课"
+            normalized.contains("专业方向") -> "专业方向课"
+            normalized.contains("艺术审美") -> "艺术审美类"
+            normalized.contains("耕读教育") -> "耕读教育类"
+            normalized.contains("体育健康") -> "体育健康类"
+            normalized.contains("四史教育") -> "四史教育类"
+            else -> normalized
+        }
+    }
+
+    private fun isTrainingPlanTerm(value: String): Boolean =
+        Regex("^\\d{4}-\\d{4}-[12]$").matches(value.trim())
+
+    private fun formatTrainingPlanCredit(value: Double): String {
+        return if (value % 1.0 == 0.0) value.toInt().toString()
+        else String.format(Locale.US, "%.1f", value)
+    }
+
+    private fun cleanTrainingPlanText(value: String): String {
+        return value
+            .replace('\u00A0', ' ')
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
     private fun parseCourses(body: String): List<RemoteCourse> {
         val data = JSONObject(body).optJSONArray("data")
             ?: throw IllegalStateException("教务系统课程数据格式变化")
@@ -1162,7 +1509,19 @@ class SdauCourseRepository {
     private fun cleanLocation(value: String) = value.replace(Regex("(?i)<br\\s*/?>"), " / ").replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
     private fun splitLines(value: String) = value.replace(Regex("(?i)<br\\s*/?>"), "\n").split('\n').map { clean(it) }.filter { it.isNotEmpty() }
 
+    private data class MutableTrainingPlanItem(
+        val category: String,
+        val requiredCredits: String,
+        val completedCredits: String,
+        val currentCredits: String,
+        val remainingCredits: String,
+        val subjects: MutableList<RemoteTrainingPlanSubject> = mutableListOf()
+    )
+
+    private enum class TrainingPlanSubjectBucket { COMPLETED, CURRENT, UNCOMPLETED }
+
     companion object {
+        private val BK_TRAINING_PLAN_CATEGORIES = setOf("学科基础课组", "通识必修课", "专业核心课")
         private val COOKIE_HANDLER_LOCK = Any()
         private const val REQUEST_ATTEMPTS = 3
         private val RETRYABLE_HTTP_STATUSES = setOf(408, 425, 429)

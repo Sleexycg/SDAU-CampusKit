@@ -22,7 +22,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 12
-        versionName = "0.3.8"
+        versionName = "0.3.9 Beta"
         androidResources.localeFilters += arrayOf("zh", "en")
     }
 
@@ -68,7 +68,9 @@ androidComponents {
     onVariants(selector().withBuildType("release")) { variant ->
         variant.outputs.forEach { output ->
             output.outputFileName.set(
-                output.versionName.map { versionName -> "WeSDAU_V$versionName.apk" }
+                output.versionName.map { versionName ->
+                    "WeSDAU_V${versionName.replace(' ', '_')}.apk"
+                }
             )
         }
     }
@@ -76,6 +78,7 @@ androidComponents {
 
 dependencies {
     implementation("com.google.android.material:material:1.12.0")
+    implementation("org.jsoup:jsoup:1.18.3")
     implementation("androidx.core:core-ktx:1.13.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.work:work-runtime-ktx:2.11.2")

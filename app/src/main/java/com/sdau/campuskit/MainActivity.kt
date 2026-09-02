@@ -242,6 +242,10 @@ class MainActivity : ComponentActivity() {
     private var scoreReminderOverlay: LiquidScoreReminderDialogView? = null
     private val scoreTermSelectorExpanded = mutableStateOf(false)
     private var scoreDetailOverlay: LiquidScoreDetailDialogView? = null
+    private var trainingPlanOverlay: LiquidTrainingPlanPageView? = null
+    private var trainingPlanCache: RemoteTrainingPlanResult? = null
+    private var trainingPlanCacheOwner = ""
+    private var trainingPlanRequestGeneration = 0
     private var emptyRoomFilterOverlay: LiquidPickerDialogView? = null
     private var publicOptionOverlay: LiquidPickerDialogView? = null
     private var appearanceOverlay: LiquidAppearanceDialogView? = null
@@ -917,6 +921,9 @@ class MainActivity : ComponentActivity() {
 
     private fun scheduleHeaderDateLabel(): String {
         if (viewingPublicSchedule) return publicScheduleClassName
+        if (termOrder(selectedTerm()) == termOrder(inferredCurrentTerm())) {
+            return todayLabel()
+        }
         if (isHistoricalOverview()) {
             return SimpleDateFormat("yyyy/M/d", Locale.CHINA)
                 .format(termStartDate(selectedTerm()).time)
@@ -3507,6 +3514,15 @@ class MainActivity : ComponentActivity() {
                         onClick = { hideActionMenu { showSharePicker() } }
                     )
                 )
+                if (!viewingPublicSchedule) {
+                    add(
+                        LiquidMenuAction(
+                            title = "培养方案",
+                            iconRes = R.drawable.ic_training_plan,
+                            onClick = { hideActionMenu { showTrainingPlanPage() } }
+                        )
+                    )
+                }
                 add(
                     LiquidMenuAction(
                         title = "外观",
@@ -3578,6 +3594,78 @@ class MainActivity : ComponentActivity() {
             overlay.releaseSnapshot()
             afterDismiss?.invoke()
         }
+    }
+
+    private fun showTrainingPlanPage() {
+        if (trainingPlanOverlay != null) return
+        lateinit var page: LiquidTrainingPlanPageView
+        page = LiquidTrainingPlanPageView(
+            context = this,
+            pageBackgroundBitmap = currentPageBackgroundBitmap,
+            pageBackgroundScrim = customBackgroundScrimColor(),
+            textPalette = scheduleTextPalette,
+            onBack = { hideTrainingPlanPage() },
+            onRefresh = { loadTrainingPlan(page, forceRefresh = true) }
+        )
+        trainingPlanOverlay = page
+        pageHost.addView(page, matchParentParams())
+        page.alpha = 0f
+        page.animate()
+            .alpha(1f)
+            .setDuration(220L)
+            .start()
+        loadTrainingPlan(page, forceRefresh = false)
+    }
+
+    private fun loadTrainingPlan(page: LiquidTrainingPlanPageView, forceRefresh: Boolean) {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val account = prefs.getString(KEY_ACCOUNT, "").orEmpty().trim()
+        val password = prefs.getString(KEY_PASSWORD, "").orEmpty()
+        if (!forceRefresh && trainingPlanCacheOwner == account) {
+            trainingPlanCache?.let {
+                page.showResult(it)
+                return
+            }
+        }
+        if (account.isBlank() || password.isBlank()) {
+            page.showError("登录信息不完整，请重新登录后查询")
+            return
+        }
+        if (account == "114514") {
+            page.showError("演示账号暂不提供培养方案数据")
+            return
+        }
+
+        page.showLoading()
+        val generation = ++trainingPlanRequestGeneration
+        networkExecutor.execute {
+            val result = runCatching {
+                SdauCourseRepository().queryTrainingPlan(account, password)
+            }
+            runOnUiThread {
+                if (generation != trainingPlanRequestGeneration || trainingPlanOverlay !== page) {
+                    return@runOnUiThread
+                }
+                result.onSuccess {
+                    trainingPlanCacheOwner = account
+                    trainingPlanCache = it
+                    page.showResult(it)
+                }.onFailure {
+                    page.showError(it.message?.take(180) ?: "培养方案查询失败，请稍后重试")
+                }
+            }
+        }
+    }
+
+    private fun hideTrainingPlanPage() {
+        val overlay = trainingPlanOverlay ?: return
+        trainingPlanOverlay = null
+        trainingPlanRequestGeneration++
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(180L)
+            .withEndAction { pageHost.removeView(overlay) }
+            .start()
     }
 
     private fun showAppearanceDialog() {
@@ -6628,6 +6716,10 @@ class MainActivity : ComponentActivity() {
             hideScoreDetail()
             return
         }
+        if (trainingPlanOverlay != null) {
+            hideTrainingPlanPage()
+            return
+        }
         if (actionMenuOverlay != null) {
             hideActionMenu()
             return
@@ -8882,6 +8974,8 @@ class MainActivity : ComponentActivity() {
         updateDialogView = null
         scoreDetailOverlay?.releaseSnapshot()
         scoreDetailOverlay = null
+        trainingPlanRequestGeneration++
+        trainingPlanOverlay = null
         scoreReminderOverlay?.releaseSnapshot()
         scoreReminderOverlay = null
         detailOverlay?.releaseSnapshot()
