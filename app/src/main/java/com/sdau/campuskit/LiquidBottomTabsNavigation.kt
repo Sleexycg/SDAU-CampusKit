@@ -3,14 +3,21 @@ package com.sdau.campuskit
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
+import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.MutatorMutex
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -26,9 +33,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -79,7 +88,9 @@ import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.TextStyle
@@ -112,12 +123,15 @@ import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.Capsule
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.abs
+import kotlin.math.hypot
+import kotlin.math.roundToInt
 import kotlin.math.sign
 
 internal fun createCampusLiquidBottomTabsView(
@@ -144,6 +158,7 @@ internal class CampusLiquidBottomTabsView(
     private var backgroundBitmapState by mutableStateOf(pageBackgroundBitmap)
     private var backgroundScrimState by mutableIntStateOf(pageBackgroundScrim)
     private var backgroundCropState by mutableStateOf<BackgroundCropSpec?>(null)
+    private var selectedIndexState by mutableIntStateOf(initialIndex.coerceIn(0, 3))
 
     init {
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
@@ -152,7 +167,6 @@ internal class CampusLiquidBottomTabsView(
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setCampusContent {
                 val themeColors = CampusComposeTheme.colors
-                var selectedIndex by rememberSaveable { mutableIntStateOf(initialIndex) }
                 var hostOffsetInPage by remember { mutableStateOf(Offset.Zero) }
                 var pageSize by remember { mutableStateOf(IntSize.Zero) }
                 val pageBackgroundBitmap = backgroundBitmapState
@@ -201,9 +215,9 @@ internal class CampusLiquidBottomTabsView(
                 ) {
                     Box(Modifier.padding(bottom = 18.dp)) {
                         LiquidBottomTabs(
-                            selectedTabIndex = { selectedIndex },
+                            selectedTabIndex = { selectedIndexState },
                             onTabSelected = { index ->
-                                selectedIndex = index
+                                selectedIndexState = index
                                 onTabSelected(index, this@CampusLiquidBottomTabsView)
                             },
                             backdrop = backdrop,
@@ -219,9 +233,9 @@ internal class CampusLiquidBottomTabsView(
                             repeat(4) { index ->
                                 LiquidBottomTab(
                                     onClick = {
-                                        if (selectedIndex == index) {
+                                        if (selectedIndexState == index) {
                                             onTabSelected(index, this@CampusLiquidBottomTabsView)
-                                        } else selectedIndex = index
+                                        } else selectedIndexState = index
                                     }
                                 ) {
                                     LegacyNavigationIcon(index)
@@ -243,6 +257,624 @@ internal class CampusLiquidBottomTabsView(
         backgroundBitmapState = bitmap
         backgroundScrimState = scrim
         backgroundCropState = crop
+    }
+
+    fun setSelectedIndex(index: Int) {
+        selectedIndexState = index.coerceIn(0, 3)
+    }
+}
+
+internal fun createCampusRadialSwitcherView(
+    context: Context,
+    pageBackgroundBitmap: Bitmap?,
+    pageBackgroundScrim: Int,
+    onInteractionChanged: (Boolean) -> Unit = {},
+    onActionSelected: (CampusRadialQuickAction) -> Unit
+): CampusRadialSwitcherView = CampusRadialSwitcherView(
+    context = context,
+    pageBackgroundBitmap = pageBackgroundBitmap,
+    pageBackgroundScrim = pageBackgroundScrim,
+    onInteractionChanged = onInteractionChanged,
+    onActionSelected = onActionSelected
+)
+
+internal enum class CampusRadialQuickAction {
+    TRAINING_PLAN,
+    GRADE_EXAM,
+    DORM_ELECTRICITY
+}
+
+/**
+ * An overlay-only radial page switcher. The Android host deliberately ignores
+ * pointer downs outside the collapsed anchor, so the transparent part of this
+ * view never steals touches from the schedule or the existing bottom tabs.
+ */
+internal class CampusRadialSwitcherView(
+    context: Context,
+    pageBackgroundBitmap: Bitmap?,
+    pageBackgroundScrim: Int,
+    private val onInteractionChanged: (Boolean) -> Unit,
+    private val onActionSelected: (CampusRadialQuickAction) -> Unit
+) : FrameLayout(context) {
+    private var backgroundBitmapState by mutableStateOf(pageBackgroundBitmap)
+    private var backgroundScrimState by mutableIntStateOf(pageBackgroundScrim)
+    private var backgroundCropState by mutableStateOf<BackgroundCropSpec?>(null)
+    private var radialGestureActive = false
+    private var radialMenuExpanded by mutableStateOf(false)
+    private var interactionVisible = false
+
+    private val anchorDiameterPx: Float
+        get() = 56f * resources.displayMetrics.density
+    private val anchorMarginPx: Float
+        get() = 16f * resources.displayMetrics.density
+
+    init {
+        clipChildren = false
+        clipToPadding = false
+        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        val composeView = ComposeView(context).apply {
+            clipChildren = false
+            clipToPadding = false
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+            setCampusContent {
+                val themeColors = CampusComposeTheme.colors
+                val density = LocalDensity.current
+                var hostOffsetInPage by remember { mutableStateOf(Offset.Zero) }
+                var pageSize by remember { mutableStateOf(IntSize.Zero) }
+                val radialAnimationScope = rememberCoroutineScope()
+                val releasedExpansion = remember { Animatable(0f) }
+                var radialDragging by remember { mutableStateOf(false) }
+                var dragExpansion by remember { mutableFloatStateOf(0f) }
+                var gestureStartPosition by remember { mutableStateOf(Offset.Zero) }
+                var gestureStartedExpanded by remember { mutableStateOf(false) }
+                var gestureStartedWithVisibleAnchor by remember { mutableStateOf(false) }
+                var anchorVisible by remember { mutableStateOf(false) }
+                var anchorVisibilityToken by remember { mutableIntStateOf(0) }
+                var radialAutoCloseToken by remember { mutableIntStateOf(0) }
+                var hoveredAction by remember {
+                    mutableStateOf<CampusRadialQuickAction?>(null)
+                }
+                val expansionProgress = if (radialDragging) {
+                    dragExpansion
+                } else {
+                    releasedExpansion.value
+                }
+                val anchorTargetAlpha = if (
+                    anchorVisible || radialDragging || radialMenuExpanded ||
+                    expansionProgress > 0.01f
+                ) {
+                    1f
+                } else {
+                    0f
+                }
+                val anchorAlpha by animateFloatAsState(
+                    targetValue = anchorTargetAlpha,
+                    animationSpec = if (anchorTargetAlpha > 0f) {
+                        tween(durationMillis = 140)
+                    } else {
+                        tween(durationMillis = 850, easing = EaseOut)
+                    },
+                    label = "radialSwitcherAnchorAlpha"
+                )
+                LaunchedEffect(
+                    anchorVisible,
+                    anchorVisibilityToken,
+                    radialDragging,
+                    radialMenuExpanded
+                ) {
+                    if (anchorVisible && !radialDragging && !radialMenuExpanded) {
+                        // A first tap only reveals the gear briefly. That avoids it sitting
+                        // over the bottom tabs for too long while preserving a second-tap
+                        // affordance for opening the radial menu.
+                        delay(900L)
+                        anchorVisible = false
+                    }
+                }
+                LaunchedEffect(Unit) {
+                    // Start the idle countdown only once a drag has actually finished.  Using
+                    // a state flow (rather than a single effect keyed only to "expanded")
+                    // makes every new touch cancel and restart the countdown reliably.
+                    snapshotFlow {
+                        Triple(radialMenuExpanded, radialDragging, radialAutoCloseToken)
+                    }.collectLatest { (expanded, dragging, token) ->
+                        if (!expanded || dragging) return@collectLatest
+                        delay(5_500L)
+                        if (
+                            radialMenuExpanded &&
+                            !radialDragging &&
+                            radialAutoCloseToken == token
+                        ) {
+                            hoveredAction = null
+                            // Keep this animation outside collectLatest's cancellable body.
+                            // Flipping radialMenuExpanded immediately emits a new snapshot and
+                            // cancels the collector; doing that before animateTo previously left
+                            // the bubbles visible while their hit targets were already disabled.
+                            radialAnimationScope.launch {
+                                releasedExpansion.animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = tween(
+                                        durationMillis = 320,
+                                        easing = FastOutSlowInEasing
+                                    )
+                                )
+                                radialMenuExpanded = false
+                                anchorVisible = false
+                                updateInteractionVisible(false)
+                            }
+                        }
+                    }
+                }
+                val pageBackgroundBitmap = backgroundBitmapState
+                val pageBackgroundScrim = backgroundScrimState
+                val pageBackgroundCrop = backgroundCropState
+                val backgroundImage = remember(pageBackgroundBitmap) {
+                    pageBackgroundBitmap?.asImageBitmap()
+                }
+                val backdrop = remember(
+                    hostOffsetInPage,
+                    pageSize,
+                    backgroundImage,
+                    pageBackgroundScrim,
+                    pageBackgroundCrop,
+                    themeColors.isDark
+                ) {
+                    SilkyPageGradientBackdrop(
+                        hostOffsetInPage = hostOffsetInPage,
+                        pageSize = pageSize,
+                        pageBackgroundImage = backgroundImage,
+                        pageBackgroundScrim = Color(pageBackgroundScrim),
+                        pageBackgroundCrop = pageBackgroundCrop,
+                        gradientColors = smoothGradientSamples(themeColors.pageGradient)
+                    )
+                }
+
+                BoxWithConstraints(
+                    Modifier
+                        .fillMaxSize()
+                        .onGloballyPositioned {
+                            val page = this@CampusRadialSwitcherView.parent as? View
+                                ?: return@onGloballyPositioned
+                            val hostLocation = IntArray(2)
+                            val pageLocation = IntArray(2)
+                            this@CampusRadialSwitcherView.getLocationInWindow(hostLocation)
+                            page.getLocationInWindow(pageLocation)
+                            val nextOffset = Offset(
+                                (hostLocation[0] - pageLocation[0]).toFloat(),
+                                (hostLocation[1] - pageLocation[1]).toFloat()
+                            )
+                            val nextSize = IntSize(page.width, page.height)
+                            if (hostOffsetInPage != nextOffset) hostOffsetInPage = nextOffset
+                            if (pageSize != nextSize) pageSize = nextSize
+                        }
+                ) {
+                    val anchorDiameter = 56.dp
+                    val targetDiameter = 50.dp
+                    // The liquid lens grows while highlighted. Keep a generous, non-clipped
+                    // drawing box around both the anchor and targets so a fast swipe cannot
+                    // turn their circular edges into straight clipped lines.
+                    val anchorContainerDiameter = 88.dp
+                    val targetContainerDiameter = 80.dp
+                    val anchorMargin = 16.dp
+                    val widthPx = constraints.maxWidth.toFloat()
+                    val heightPx = constraints.maxHeight.toFloat()
+                    val anchorRadiusPx = with(density) { anchorDiameter.toPx() / 2f }
+                    val targetRadiusPx = with(density) { targetDiameter.toPx() / 2f }
+                    val anchorContainerRadiusPx = with(density) {
+                        anchorContainerDiameter.toPx() / 2f
+                    }
+                    val targetContainerRadiusPx = with(density) {
+                        targetContainerDiameter.toPx() / 2f
+                    }
+                    val marginPx = with(density) { anchorMargin.toPx() }
+                    val revealStartPx = with(density) { 10.dp.toPx() }
+                    val revealEndPx = with(density) { 82.dp.toPx() }
+                    val tapSlopPx = with(density) { 12.dp.toPx() }
+                    val anchorCenter = Offset(
+                        widthPx - marginPx - anchorRadiusPx,
+                        heightPx - marginPx - anchorRadiusPx
+                    )
+                    val expandTowardLeft = pageSize.width <= 0 ||
+                        hostOffsetInPage.x + widthPx / 2f >= pageSize.width / 2f
+                    val horizontalDirection = if (expandTowardLeft) -1f else 1f
+                    val targetActions = remember {
+                        listOf(
+                            CampusRadialQuickAction.TRAINING_PLAN,
+                            CampusRadialQuickAction.GRADE_EXAM,
+                            CampusRadialQuickAction.DORM_ELECTRICITY
+                        )
+                    }
+                    val radialOffsetsDp = remember {
+                        listOf(
+                            Offset(0f, -92f),
+                            Offset(64f, -64f),
+                            Offset(92f, 0f)
+                        )
+                    }
+                    val fullTargetCenters = targetActions.mapIndexed { slot, _ ->
+                        val offset = radialOffsetsDp[slot]
+                        Offset(
+                            anchorCenter.x + with(density) { offset.x.dp.toPx() } * horizontalDirection,
+                            anchorCenter.y + with(density) { offset.y.dp.toPx() }
+                        )
+                    }
+                    fun targetAt(position: Offset): CampusRadialQuickAction? {
+                        var closestAction: CampusRadialQuickAction? = null
+                        var closestDistance = Float.MAX_VALUE
+                        fullTargetCenters.forEachIndexed { slot, center ->
+                            val distance = hypot(position.x - center.x, position.y - center.y)
+                            if (distance <= targetRadiusPx * 1.34f && distance < closestDistance) {
+                                closestDistance = distance
+                                closestAction = targetActions[slot]
+                            }
+                        }
+                        return closestAction
+                    }
+
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .pointerInput(anchorCenter, horizontalDirection, radialMenuExpanded) {
+                                inspectDragGestures(
+                                    onDragStart = { down ->
+                                        updateInteractionVisible(true)
+                                        gestureStartPosition = down.position
+                                        gestureStartedExpanded = radialMenuExpanded
+                                        gestureStartedWithVisibleAnchor = anchorVisible
+                                        if (gestureStartedExpanded) radialAutoCloseToken += 1
+                                        radialDragging = true
+                                        dragExpansion = if (radialMenuExpanded) 1f else 0f
+                                        anchorVisible = true
+                                        anchorVisibilityToken += 1
+                                        hoveredAction = if (radialMenuExpanded) {
+                                            targetAt(down.position)
+                                        } else {
+                                            null
+                                        }
+                                        radialAnimationScope.launch {
+                                            releasedExpansion.stop()
+                                            releasedExpansion.snapTo(
+                                                if (gestureStartedExpanded) 1f else 0f
+                                            )
+                                        }
+                                    },
+                                    onDragEnd = { change ->
+                                        val gestureDistance = hypot(
+                                            change.position.x - gestureStartPosition.x,
+                                            change.position.y - gestureStartPosition.y
+                                        )
+                                        val progressAtRelease = dragExpansion
+                                        val isTap = gestureDistance <= tapSlopPx
+                                        val releaseDistanceFromAnchor = hypot(
+                                            change.position.x - anchorCenter.x,
+                                            change.position.y - anchorCenter.y
+                                        )
+                                        val tappedAnchor = isTap && hypot(
+                                            change.position.x - anchorCenter.x,
+                                            change.position.y - anchorCenter.y
+                                        ) <= anchorContainerRadiusPx * 1.1f
+                                        val selected = when {
+                                            gestureStartedExpanded -> targetAt(change.position)
+                                            progressAtRelease >= 0.72f -> targetAt(change.position)
+                                            else -> null
+                                        }
+                                        hoveredAction = null
+                                        anchorVisibilityToken += 1
+                                        if (tappedAnchor) {
+                                            radialDragging = false
+                                            when {
+                                                // A second tap on an opened gear is always a
+                                                // close action; do not restart the expansion.
+                                                gestureStartedExpanded -> {
+                                                    radialMenuExpanded = false
+                                                    radialAnimationScope.launch {
+                                                        releasedExpansion.snapTo(progressAtRelease)
+                                                        releasedExpansion.animateTo(
+                                                            targetValue = 0f,
+                                                            animationSpec = tween(
+                                                                durationMillis = 300,
+                                                                easing = FastOutSlowInEasing
+                                                            )
+                                                        )
+                                                        updateInteractionVisible(false)
+                                                    }
+                                                }
+
+                                                // Tapping the invisible corner first only shows
+                                                // the primary gear. The radial choices appear on
+                                                // the next gear tap or on an outward drag.
+                                                !gestureStartedWithVisibleAnchor -> {
+                                                    radialMenuExpanded = false
+                                                    anchorVisible = true
+                                                    radialAnimationScope.launch {
+                                                        releasedExpansion.snapTo(0f)
+                                                        updateInteractionVisible(false)
+                                                    }
+                                                }
+
+                                                else -> {
+                                                    radialMenuExpanded = true
+                                                    anchorVisible = true
+                                                    radialAutoCloseToken += 1
+                                                    radialAnimationScope.launch {
+                                                        releasedExpansion.snapTo(progressAtRelease)
+                                                        releasedExpansion.animateTo(
+                                                            targetValue = 1f,
+                                                            animationSpec = tween(
+                                                                durationMillis = 420,
+                                                                easing = FastOutSlowInEasing
+                                                            )
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            return@inspectDragGestures
+                                        }
+                                        // Once the secondary menu is visible, avoid treating a
+                                        // fast pass between bubbles as an instruction to close.
+                                        // Closing by drag is explicit: the finger must come back
+                                        // inside the primary gear's safe hit area. This also
+                                        // prevents a quick inward flick from being interpreted as
+                                        // another request to settle at the fully expanded state.
+                                        val returnedToAnchor = gestureStartedExpanded &&
+                                            releaseDistanceFromAnchor <=
+                                            anchorContainerRadiusPx * 1.15f
+                                        val keepExpanded = selected == null && when {
+                                            gestureStartedExpanded -> !returnedToAnchor
+                                            else -> progressAtRelease >= 0.72f
+                                        }
+                                        if (keepExpanded) {
+                                            radialDragging = false
+                                            radialMenuExpanded = true
+                                            anchorVisible = true
+                                            radialAutoCloseToken += 1
+                                            radialAnimationScope.launch {
+                                                releasedExpansion.snapTo(progressAtRelease)
+                                                releasedExpansion.animateTo(
+                                                    targetValue = 1f,
+                                                    // A deliberately slower settle makes a
+                                                    // full outward swipe feel like the bubbles
+                                                    // are floating into place instead of snapping.
+                                                    animationSpec = tween(
+                                                        durationMillis = 420,
+                                                        easing = FastOutSlowInEasing
+                                                    )
+                                                )
+                                            }
+                                        } else {
+                                            radialDragging = false
+                                            radialMenuExpanded = false
+                                            radialAnimationScope.launch {
+                                                releasedExpansion.snapTo(progressAtRelease)
+                                                releasedExpansion.animateTo(
+                                                    targetValue = 0f,
+                                                    animationSpec = tween(
+                                                        durationMillis = 300,
+                                                        easing = FastOutSlowInEasing
+                                                    )
+                                                )
+                                                updateInteractionVisible(false)
+                                            }
+                                            if (selected != null) {
+                                                onActionSelected(selected)
+                                            }
+                                        }
+                                    },
+                                    onDragCancel = {
+                                        val progressAtCancel = dragExpansion
+                                        hoveredAction = null
+                                        anchorVisibilityToken += 1
+                                        radialDragging = false
+                                        radialMenuExpanded = false
+                                        radialAnimationScope.launch {
+                                            releasedExpansion.snapTo(progressAtCancel)
+                                            releasedExpansion.animateTo(
+                                                targetValue = 0f,
+                                                animationSpec = tween(
+                                                    durationMillis = 300,
+                                                    easing = FastOutSlowInEasing
+                                                )
+                                            )
+                                            updateInteractionVisible(false)
+                                        }
+                                    },
+                                    onDrag = { change, _ ->
+                                        val gestureDistance = hypot(
+                                            change.position.x - gestureStartPosition.x,
+                                            change.position.y - gestureStartPosition.y
+                                        )
+                                        dragExpansion = if (gestureStartedExpanded) {
+                                            val distanceFromAnchor = hypot(
+                                                change.position.x - anchorCenter.x,
+                                                change.position.y - anchorCenter.y
+                                            )
+                                            ((distanceFromAnchor - revealStartPx) /
+                                                (revealEndPx - revealStartPx))
+                                                .coerceIn(0f, 1f)
+                                        } else {
+                                            ((gestureDistance - revealStartPx) /
+                                                (revealEndPx - revealStartPx))
+                                                .coerceIn(0f, 1f)
+                                        }
+                                        hoveredAction = if (dragExpansion >= 0.68f) {
+                                            targetAt(change.position)
+                                        } else {
+                                            null
+                                        }
+                                    }
+                                )
+                            }
+                    ) {
+                        targetActions.forEachIndexed { slot, action ->
+                            val offset = radialOffsetsDp[slot]
+                            val center = Offset(
+                                anchorCenter.x + with(density) { offset.x.dp.toPx() } *
+                                    horizontalDirection * expansionProgress,
+                                anchorCenter.y + with(density) { offset.y.dp.toPx() } *
+                                    expansionProgress
+                            )
+                            RadialLiquidBubble(
+                                iconRes = when (action) {
+                                    CampusRadialQuickAction.TRAINING_PLAN -> R.drawable.ic_training_plan
+                                    CampusRadialQuickAction.GRADE_EXAM -> R.drawable.ic_radial_score_query
+                                    CampusRadialQuickAction.DORM_ELECTRICITY -> R.drawable.ic_radial_dorm_electricity
+                                },
+                                backdrop = backdrop,
+                                highlighted = hoveredAction == action,
+                                accentIcon = hoveredAction == action,
+                                bubbleDiameter = targetDiameter,
+                                modifier = Modifier
+                                    .offset {
+                                        IntOffset(
+                                            (center.x - targetContainerRadiusPx).roundToInt(),
+                                            (center.y - targetContainerRadiusPx).roundToInt()
+                                        )
+                                    }
+                                    .size(targetContainerDiameter)
+                                    .alpha(expansionProgress)
+                            )
+                        }
+                        RadialLiquidBubble(
+                            iconRes = R.drawable.ic_radial_settings,
+                            backdrop = backdrop,
+                            highlighted = expansionProgress > 0.04f,
+                            accentIcon = expansionProgress > 0.04f,
+                            bubbleDiameter = anchorDiameter,
+                            modifier = Modifier
+                                .offset {
+                                    IntOffset(
+                                        (anchorCenter.x - anchorContainerRadiusPx).roundToInt(),
+                                        (anchorCenter.y - anchorContainerRadiusPx).roundToInt()
+                                    )
+                                }
+                                .size(anchorContainerDiameter)
+                                .alpha(anchorAlpha)
+                        )
+                    }
+                }
+            }
+        }
+        addView(composeView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            val radius = anchorDiameterPx / 2f
+            val centerX = width - anchorMarginPx - radius
+            val centerY = height - anchorMarginPx - radius
+            radialGestureActive = radialMenuExpanded ||
+                hypot(event.x - centerX, event.y - centerY) <= radius * 1.12f
+            if (!radialGestureActive) return false
+        }
+        if (!radialGestureActive) return false
+        val handled = super.dispatchTouchEvent(event)
+        if (event.actionMasked == MotionEvent.ACTION_UP ||
+            event.actionMasked == MotionEvent.ACTION_CANCEL
+        ) {
+            radialGestureActive = false
+        }
+        return handled
+    }
+
+    fun updatePageBackground(
+        bitmap: Bitmap?,
+        scrim: Int,
+        crop: BackgroundCropSpec? = null
+    ) {
+        backgroundBitmapState = bitmap
+        backgroundScrimState = scrim
+        backgroundCropState = crop
+    }
+
+    override fun onDetachedFromWindow() {
+        updateInteractionVisible(false)
+        super.onDetachedFromWindow()
+    }
+
+    private fun updateInteractionVisible(visible: Boolean) {
+        if (interactionVisible == visible) return
+        interactionVisible = visible
+        onInteractionChanged(visible)
+    }
+}
+
+@Composable
+private fun RadialLiquidBubble(
+    iconRes: Int,
+    backdrop: Backdrop,
+    highlighted: Boolean,
+    accentIcon: Boolean,
+    bubbleDiameter: Dp,
+    modifier: Modifier = Modifier
+) {
+    val themeColors = CampusComposeTheme.colors
+    val visualDiameter by animateDpAsState(
+        targetValue = bubbleDiameter * if (highlighted) 1.16f else 1f,
+        // No overshoot: overshooting a circular host is what made the edge look clipped
+        // during a very fast pass over a radial item.
+        animationSpec = spring(dampingRatio = 1f, stiffness = 520f),
+        label = "radialSwitcherBubbleDiameter"
+    )
+    Box(
+        modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier
+            .size(visualDiameter)
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { Capsule() },
+                effects = {
+                    vibrancy()
+                    blur(if (highlighted) 10.dp.toPx() else 8.dp.toPx())
+                    lens(
+                        if (highlighted) 18.dp.toPx() else 11.dp.toPx(),
+                        if (highlighted) 30.dp.toPx() else 22.dp.toPx(),
+                        chromaticAberration = highlighted
+                    )
+                },
+                highlight = {
+                    Highlight.Default.copy(
+                        alpha = if (highlighted) {
+                            if (themeColors.isDark) 0.34f else 0.92f
+                        } else {
+                            if (themeColors.isDark) 0.12f else 0.58f
+                        }
+                    )
+                },
+                innerShadow = {
+                    InnerShadow(
+                        radius = if (highlighted) 7.dp else 4.dp,
+                        alpha = if (highlighted) 0.56f else 0.24f
+                    )
+                },
+                onDrawSurface = {
+                    drawRect(
+                        if (highlighted) themeColors.glassStrongSurface
+                        else themeColors.glassSurface
+                    )
+                }
+            )
+            .border(
+                width = 1.dp,
+                color = Color.White.copy(
+                    alpha = if (themeColors.isDark) 0.24f else 0.76f
+                ),
+                shape = CircleShape
+            )
+            .clip(CircleShape),
+            contentAlignment = Alignment.Center
+        ) {
+            Image(
+                painter = painterResource(iconRes),
+                contentDescription = null,
+                modifier = Modifier.size(if (highlighted) 23.dp else 21.dp),
+                colorFilter = ColorFilter.tint(
+                    if (accentIcon) themeColors.accent else themeColors.primaryText
+                )
+            )
+        }
     }
 }
 
@@ -785,9 +1417,13 @@ internal fun LiquidBottomTabs(
 }
 
 @Composable
-private fun LegacyNavigationIcon(index: Int) {
-    val iconColor = CampusComposeTheme.colors.primaryText
-    androidx.compose.foundation.Canvas(Modifier.size(20.dp)) {
+private fun LegacyNavigationIcon(
+    index: Int,
+    color: Color = CampusComposeTheme.colors.primaryText,
+    iconSize: Dp = 20.dp
+) {
+    val iconColor = color
+    androidx.compose.foundation.Canvas(Modifier.size(iconSize)) {
         val s = 8.dp.toPx()
         fun drawGlyph(color: Color, stroke: Stroke, verticalOffset: Float) {
             val cx = size.width / 2f
@@ -842,6 +1478,93 @@ private fun LegacyNavigationIcon(index: Int) {
                         stroke.width,
                         stroke.cap
                     )
+                }
+                4 -> {
+                    // Settings: a compact gear that stays legible inside the 56dp anchor.
+                    drawCircle(color, s * .42f, Offset(cx, cy), style = stroke)
+                    drawCircle(color, s * .12f, Offset(cx, cy), style = stroke)
+                    repeat(8) { step ->
+                        val angle = Math.toRadians((step * 45.0) - 90.0)
+                        val inner = s * .58f
+                        val outer = s * .88f
+                        drawLine(
+                            color,
+                            Offset(
+                                cx + kotlin.math.cos(angle).toFloat() * inner,
+                                cy + kotlin.math.sin(angle).toFloat() * inner
+                            ),
+                            Offset(
+                                cx + kotlin.math.cos(angle).toFloat() * outer,
+                                cy + kotlin.math.sin(angle).toFloat() * outer
+                            ),
+                            stroke.width,
+                            stroke.cap
+                        )
+                    }
+                }
+                5 -> {
+                    // Training plan: an open book.
+                    val top = cy - s * .72f
+                    val bottom = cy + s * .78f
+                    drawLine(color, Offset(cx, top), Offset(cx, bottom), stroke.width, stroke.cap)
+                    drawPath(
+                        Path().apply {
+                            moveTo(cx, top + s * .12f)
+                            cubicTo(
+                                cx - s * .28f, top - s * .08f,
+                                cx - s * .92f, top,
+                                cx - s * .92f, top + s * .3f
+                            )
+                            lineTo(cx - s * .92f, bottom)
+                            cubicTo(
+                                cx - s * .5f, bottom - s * .2f,
+                                cx - s * .22f, bottom - s * .16f,
+                                cx, bottom
+                            )
+                        },
+                        color = color,
+                        style = stroke
+                    )
+                    drawPath(
+                        Path().apply {
+                            moveTo(cx, top + s * .12f)
+                            cubicTo(
+                                cx + s * .28f, top - s * .08f,
+                                cx + s * .92f, top,
+                                cx + s * .92f, top + s * .3f
+                            )
+                            lineTo(cx + s * .92f, bottom)
+                            cubicTo(
+                                cx + s * .5f, bottom - s * .2f,
+                                cx + s * .22f, bottom - s * .16f,
+                                cx, bottom
+                            )
+                        },
+                        color = color,
+                        style = stroke
+                    )
+                }
+                6 -> {
+                    // Appearance: sun icon.
+                    drawCircle(color, s * .36f, Offset(cx, cy), style = stroke)
+                    repeat(8) { step ->
+                        val angle = Math.toRadians((step * 45.0) - 90.0)
+                        val inner = s * .58f
+                        val outer = s * .92f
+                        drawLine(
+                            color,
+                            Offset(
+                                cx + kotlin.math.cos(angle).toFloat() * inner,
+                                cy + kotlin.math.sin(angle).toFloat() * inner
+                            ),
+                            Offset(
+                                cx + kotlin.math.cos(angle).toFloat() * outer,
+                                cy + kotlin.math.sin(angle).toFloat() * outer
+                            ),
+                            stroke.width,
+                            stroke.cap
+                        )
+                    }
                 }
             }
         }

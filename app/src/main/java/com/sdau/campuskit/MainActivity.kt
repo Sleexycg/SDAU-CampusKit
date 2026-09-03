@@ -246,10 +246,15 @@ class MainActivity : ComponentActivity() {
     private var trainingPlanCache: RemoteTrainingPlanResult? = null
     private var trainingPlanCacheOwner = ""
     private var trainingPlanRequestGeneration = 0
+    private var gradeExamOverlay: LiquidGradeExamPageView? = null
+    private var gradeExamCache: List<RemoteGradeExam>? = null
+    private var gradeExamCacheOwner = ""
+    private var gradeExamRequestGeneration = 0
     private var emptyRoomFilterOverlay: LiquidPickerDialogView? = null
     private var publicOptionOverlay: LiquidPickerDialogView? = null
     private var appearanceOverlay: LiquidAppearanceDialogView? = null
     private var refreshScheduleConfirmOverlay: LiquidConfirmDialogView? = null
+    private var dormElectricityOverlay: LiquidConfirmDialogView? = null
     private var shareOverlay: View? = null
     private var actionMenuOverlay: LiquidActionMenuView? = null
     private var backgroundEditorOverlay: LiquidBackgroundEditorView? = null
@@ -275,6 +280,7 @@ class MainActivity : ComponentActivity() {
     private var publicOptionPickerCapturePending = false
     private var appearanceCapturePending = false
     private var refreshScheduleConfirmCapturePending = false
+    private var dormElectricityCapturePending = false
     private var updateDownloadId: Long? = null
     private var updateDownloadReceiverRegistered = false
     private val updateDownloadReceiver = object : BroadcastReceiver() {
@@ -308,6 +314,9 @@ class MainActivity : ComponentActivity() {
     private var pendingExactAlarmEnable = false
     private var pendingScoreExactAlarmEnable = false
     private var bottomNavigation: CampusLiquidBottomTabsView? = null
+    private var radialSwitcher: CampusRadialSwitcherView? = null
+    private var radialChromeHidden = false
+    private var radialChromeAnimationGeneration = 0
     private val scoreUpdatesEnabled = mutableStateOf(false)
     private var scoresLoading = false
     private var scoreExporting = false
@@ -805,6 +814,7 @@ class MainActivity : ComponentActivity() {
         emptyRoomLoadError = null
         emptyRoomResult = null
         bottomNavigation = null
+        radialSwitcher = null
         detailOverlay?.releaseSnapshot()
         detailOverlay = null
         courseDialogCapturePending = false
@@ -1560,17 +1570,74 @@ class MainActivity : ComponentActivity() {
             bottomMargin = 0
         }
         page.addView(navigation, navigationLayoutParams)
+        val radial = createCampusRadialSwitcherView(
+            context = this,
+            pageBackgroundBitmap = customBackground,
+            pageBackgroundScrim = backgroundScrim,
+            onInteractionChanged = ::setRadialChromeHidden
+        ) { action ->
+            when (action) {
+                CampusRadialQuickAction.TRAINING_PLAN -> showTrainingPlanPage()
+                CampusRadialQuickAction.GRADE_EXAM -> showGradeExamPage()
+                CampusRadialQuickAction.DORM_ELECTRICITY -> showDormElectricityUnavailableDialog()
+            }
+        }
+        radialSwitcher = radial
+        val radialLayoutParams = FrameLayout.LayoutParams(
+            dp(220), dp(220), Gravity.BOTTOM or Gravity.END
+        ).apply {
+            rightMargin = 0
+            bottomMargin = 0
+        }
+        page.addView(radial, radialLayoutParams)
         ViewCompat.setOnApplyWindowInsetsListener(page) { _, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             sectionHost.setPadding(0, systemBars.top, 0, 0)
             sectionLayoutParams.bottomMargin = sectionBottomMargin + systemBars.bottom
             navigationLayoutParams.bottomMargin = systemBars.bottom
+            radialLayoutParams.bottomMargin = systemBars.bottom
             sectionHost.layoutParams = sectionLayoutParams
             navigation.layoutParams = navigationLayoutParams
+            radial.layoutParams = radialLayoutParams
             insets
         }
         page.post { ViewCompat.requestApplyInsets(page) }
         return page
+    }
+
+    private fun setRadialChromeHidden(hidden: Boolean) {
+        if (radialChromeHidden == hidden) return
+        radialChromeHidden = hidden
+        val generation = ++radialChromeAnimationGeneration
+        val targets = listOfNotNull(bottomNavigation, scheduleVersion)
+        targets.forEach { target ->
+            target.animate().cancel()
+            if (hidden) {
+                target.animate()
+                    .alpha(0f)
+                    .translationY(dp(10).toFloat())
+                    .setDuration(135L)
+                    .withEndAction {
+                        if (radialChromeHidden &&
+                            generation == radialChromeAnimationGeneration
+                        ) {
+                            target.visibility = View.INVISIBLE
+                        }
+                    }
+                    .start()
+            } else {
+                target.visibility = View.VISIBLE
+                if (target.alpha <= 0.01f) {
+                    target.translationY = dp(10).toFloat()
+                }
+                target.animate()
+                    .alpha(1f)
+                    .translationY(0f)
+                    .setDuration(180L)
+                    .withEndAction(null)
+                    .start()
+            }
+        }
     }
 
     private fun buildScheduleSection(): View {
@@ -1596,6 +1663,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showMainSection(index: Int) {
+        bottomNavigation?.setSelectedIndex(index)
         if (index == currentMainSection) {
             if (index == 0) jumpToCurrentWeek()
             if (index == 1) refreshExams()
@@ -3311,6 +3379,42 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
+    private fun showDormElectricityUnavailableDialog() {
+        if (dormElectricityOverlay != null || dormElectricityCapturePending) return
+        dormElectricityCapturePending = true
+        captureUpdateBackdrop { pageSnapshot ->
+            dormElectricityCapturePending = false
+            if (isFinishing || isDestroyed || dormElectricityOverlay != null) {
+                pageSnapshot?.takeUnless(Bitmap::isRecycled)?.recycle()
+                return@captureUpdateBackdrop
+            }
+            val dialog = LiquidConfirmDialogView(
+                context = this,
+                pageSnapshot = pageSnapshot,
+                title = "宿舍用电",
+                message = "此功能未开放",
+                cancelLabel = "",
+                confirmLabel = "知道了",
+                showCancel = false,
+                onDismiss = { hideDormElectricityUnavailableDialog() },
+                onConfirm = { hideDormElectricityUnavailableDialog() }
+            )
+            pageHost.addView(dialog, matchParentParams())
+            dormElectricityOverlay = dialog
+            dialog.alpha = 0f
+            dialog.animate().alpha(1f).setDuration(180).start()
+        }
+    }
+
+    private fun hideDormElectricityUnavailableDialog() {
+        val overlay = dormElectricityOverlay ?: return
+        overlay.animate().alpha(0f).setDuration(140).withEndAction {
+            pageHost.removeView(overlay)
+            overlay.releaseSnapshot()
+            if (dormElectricityOverlay === overlay) dormElectricityOverlay = null
+        }.start()
+    }
+
     private fun refreshPersonalSchedule() {
         if (scheduleRefreshRunning || viewingPublicSchedule) return
         val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -3464,15 +3568,6 @@ class MainActivity : ComponentActivity() {
                         onClick = { hideActionMenu { showSharePicker() } }
                     )
                 )
-                if (!viewingPublicSchedule) {
-                    add(
-                        LiquidMenuAction(
-                            title = "培养方案",
-                            iconRes = R.drawable.ic_training_plan,
-                            onClick = { hideActionMenu { showTrainingPlanPage() } }
-                        )
-                    )
-                }
                 add(
                     LiquidMenuAction(
                         title = "外观",
@@ -3611,6 +3706,73 @@ class MainActivity : ComponentActivity() {
         val overlay = trainingPlanOverlay ?: return
         trainingPlanOverlay = null
         trainingPlanRequestGeneration++
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(180L)
+            .withEndAction { pageHost.removeView(overlay) }
+            .start()
+    }
+
+    private fun showGradeExamPage() {
+        if (gradeExamOverlay != null) return
+        lateinit var page: LiquidGradeExamPageView
+        page = LiquidGradeExamPageView(
+            context = this,
+            pageBackgroundBitmap = currentPageBackgroundBitmap,
+            pageBackgroundScrim = customBackgroundScrimColor(),
+            textPalette = scheduleTextPalette,
+            onBack = { hideGradeExamPage() },
+            onRefresh = { loadGradeExams(page, forceRefresh = true) }
+        )
+        gradeExamOverlay = page
+        pageHost.addView(page, matchParentParams())
+        page.alpha = 0f
+        page.animate().alpha(1f).setDuration(220L).start()
+        loadGradeExams(page, forceRefresh = false)
+    }
+
+    private fun loadGradeExams(page: LiquidGradeExamPageView, forceRefresh: Boolean) {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val account = prefs.getString(KEY_ACCOUNT, "").orEmpty().trim()
+        val password = prefs.getString(KEY_PASSWORD, "").orEmpty()
+        if (!forceRefresh && gradeExamCacheOwner == account) {
+            gradeExamCache?.let {
+                page.showResult(it)
+                return
+            }
+        }
+        if (account.isBlank() || password.isBlank()) {
+            page.showError("登录信息不完整，请重新登录后查询")
+            return
+        }
+        if (account == "114514") {
+            page.showError("演示账号暂不提供等级考试数据")
+            return
+        }
+
+        page.showLoading()
+        val generation = ++gradeExamRequestGeneration
+        networkExecutor.execute {
+            val result = runCatching { SdauCourseRepository().queryGradeExams(account, password) }
+            runOnUiThread {
+                if (generation != gradeExamRequestGeneration || gradeExamOverlay !== page) {
+                    return@runOnUiThread
+                }
+                result.onSuccess {
+                    gradeExamCacheOwner = account
+                    gradeExamCache = it
+                    page.showResult(it)
+                }.onFailure {
+                    page.showError(it.message?.take(180) ?: "等级考试查询失败，请稍后重试")
+                }
+            }
+        }
+    }
+
+    private fun hideGradeExamPage() {
+        val overlay = gradeExamOverlay ?: return
+        gradeExamOverlay = null
+        gradeExamRequestGeneration++
         overlay.animate()
             .alpha(0f)
             .setDuration(180L)
@@ -4068,6 +4230,7 @@ class MainActivity : ComponentActivity() {
         liveScheduleBackgroundScrimColor = previewScrim
         enqueueSchedulePalettePreview(sourceBitmap, crop, previewScrim)
         bottomNavigation?.updatePageBackground(sourceBitmap, previewScrim, crop)
+        radialSwitcher?.updatePageBackground(sourceBitmap, previewScrim, crop)
 
         fun updateMatrix() {
             val viewportWidth = backgroundImage.width.takeIf { it > 0 }
@@ -4153,6 +4316,10 @@ class MainActivity : ComponentActivity() {
                 restoredBitmap,
                 restoredScrim
             )
+            radialSwitcher?.updatePageBackground(
+                restoredBitmap,
+                restoredScrim
+            )
             applyScheduleTextPalette(resolveScheduleTextPalette(restoredBitmap, restoredScrim))
         } else {
             schedulePageBackgroundImage?.let(page::removeView)
@@ -4160,6 +4327,7 @@ class MainActivity : ComponentActivity() {
             schedulePageBackgroundImage = null
             schedulePageBackgroundScrim = null
             bottomNavigation?.updatePageBackground(null, Color.TRANSPARENT)
+            radialSwitcher?.updatePageBackground(null, Color.TRANSPARENT)
             applyScheduleTextPalette(resolveScheduleTextPalette(null, Color.TRANSPARENT))
         }
     }
@@ -6611,12 +6779,20 @@ class MainActivity : ComponentActivity() {
             hideRefreshScheduleConfirmation()
             return
         }
+        if (dormElectricityOverlay != null) {
+            hideDormElectricityUnavailableDialog()
+            return
+        }
         if (scoreDetailOverlay != null) {
             hideScoreDetail()
             return
         }
         if (trainingPlanOverlay != null) {
             hideTrainingPlanPage()
+            return
+        }
+        if (gradeExamOverlay != null) {
+            hideGradeExamPage()
             return
         }
         if (actionMenuOverlay != null) {
@@ -8875,6 +9051,8 @@ class MainActivity : ComponentActivity() {
         scoreDetailOverlay = null
         trainingPlanRequestGeneration++
         trainingPlanOverlay = null
+        gradeExamRequestGeneration++
+        gradeExamOverlay = null
         scoreReminderOverlay?.releaseSnapshot()
         scoreReminderOverlay = null
         detailOverlay?.releaseSnapshot()
@@ -8887,6 +9065,8 @@ class MainActivity : ComponentActivity() {
         appearanceOverlay = null
         refreshScheduleConfirmOverlay?.releaseSnapshot()
         refreshScheduleConfirmOverlay = null
+        dormElectricityOverlay?.releaseSnapshot()
+        dormElectricityOverlay = null
         (shareOverlay as? LiquidPickerDialogView)?.releaseSnapshot()
         actionMenuOverlay?.releaseSnapshot()
         backgroundEditorOverlay?.releaseBitmap()

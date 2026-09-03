@@ -44,6 +44,7 @@ internal class LiquidConfirmDialogView(
     message: String,
     cancelLabel: String,
     confirmLabel: String,
+    showCancel: Boolean = true,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) : FrameLayout(context) {
@@ -58,6 +59,7 @@ internal class LiquidConfirmDialogView(
                     message = message,
                     cancelLabel = cancelLabel,
                     confirmLabel = confirmLabel,
+                    showCancel = showCancel,
                     onDismiss = onDismiss,
                     onConfirm = onConfirm
                 )
@@ -80,6 +82,7 @@ private fun LiquidConfirmDialog(
     message: String,
     cancelLabel: String,
     confirmLabel: String,
+    showCancel: Boolean,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit
 ) {
@@ -163,14 +166,16 @@ private fun LiquidConfirmDialog(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                QuietDialogAction(
-                    label = cancelLabel,
-                    foreground = contentColor,
-                    enabled = true,
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f),
-                    height = 52.dp
-                )
+                if (showCancel) {
+                    QuietDialogAction(
+                        label = cancelLabel,
+                        foreground = contentColor,
+                        enabled = true,
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        height = 52.dp
+                    )
+                }
                 CampusLiquidButton(
                     onClick = onConfirm,
                     backdrop = backdrop,

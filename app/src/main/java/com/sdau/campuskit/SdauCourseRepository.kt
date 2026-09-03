@@ -153,6 +153,15 @@ data class RemoteExam(
     val classroom: String
 )
 
+data class RemoteGradeExam(
+    val id: String,
+    val sequence: String,
+    val examName: String,
+    val examCategory: String,
+    val score: String,
+    val examTime: String
+)
+
 data class RemoteEmptyRoomResult(
     val term: String,
     val week: Int,
@@ -398,6 +407,40 @@ class SdauCourseRepository {
             throw IllegalStateException("登录状态已失效，请重新登录")
         }
         return parseTrainingPlan(body)
+    }
+
+    fun queryGradeExams(account: String, password: String): List<RemoteGradeExam> {
+        login(account, password)
+        val path = "/kscj/djkscj_list?type=listData&pageNum=1&pageSize=100"
+        val body = requestStage("读取等级考试成绩") { request(path, "GET", null) }
+        if (isLoginPage(body)) {
+            throw IllegalStateException("登录状态已失效，请重新登录")
+        }
+        val rows = normalizeJsonRows(body)
+        return buildList {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index) ?: continue
+                val sequence = jsonText(row, "xh", "rownum_", "xh_", "index", "id")
+                val category = jsonText(row, "skkcmc", "djkcmc", "kcmc", "kc_mc")
+                val name = jsonText(row, "skkcdjmc", "skdjmc", "djmc", "ksdj", "level")
+                    .ifBlank { category }
+                val score = jsonText(row, "fslcj", "cj", "kscj", "score", "zcj")
+                val examTime = jsonText(row, "kssj", "ksrq", "time", "sj")
+                if (name.isBlank() && score.isBlank() && examTime.isBlank()) continue
+                val id = jsonText(row, "id", "cjbh", "kscj_id")
+                    .ifBlank { listOf(sequence, name, examTime).joinToString("|") }
+                add(
+                    RemoteGradeExam(
+                        id = id,
+                        sequence = sequence,
+                        examName = name.ifBlank { "等级考试" },
+                        examCategory = category.takeUnless { it == name }.orEmpty(),
+                        score = score.ifBlank { "-" },
+                        examTime = examTime.ifBlank { "时间未记录" }
+                    )
+                )
+            }
+        }.distinctBy { it.id }
     }
 
     fun queryEmptyRooms(
