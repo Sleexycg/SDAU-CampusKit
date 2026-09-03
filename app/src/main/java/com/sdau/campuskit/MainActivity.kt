@@ -1231,6 +1231,9 @@ class MainActivity : ComponentActivity() {
             try {
                 val repository = SdauCourseRepository()
                 val remoteCourses = repository.queryCourses(id, pwd, selectedSemester)
+                if (remoteCourses.isEmpty() && hasCourseCache(id, selectedSemester)) {
+                    throw CourseScheduleNotPublishedException()
+                }
                 // 个人主页中的 infoContentTitle 是教务系统显示“姓名-学号”的来源。
                 // 姓名获取失败不影响课程登录，成绩导出会回退为仅显示学号。
                 val profile = runCatching { repository.queryStudentProfile(id, pwd) }.getOrNull()
@@ -1269,6 +1272,24 @@ class MainActivity : ComponentActivity() {
                         !onLoginPage ||
                         loginMode != LoginMode.PERSONAL
                     ) return@runOnUiThread
+                    if (error is CourseScheduleNotPublishedException && hasCourseCache(id, selectedSemester)) {
+                        activateCourseCache(id, selectedSemester)
+                        val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                        val studentName = cachedStudentName(id)
+                        preferences.edit()
+                            .putString(KEY_ACCOUNT, id)
+                            .putString(KEY_PASSWORD, pwd)
+                            .putString(KEY_TERM, selectedSemester)
+                            .putString(KEY_SCORE_TERM, selectedSemester)
+                            .putString(KEY_STUDENT_NAME, studentName)
+                            .apply()
+                        savePasswordCache(id, pwd)
+                        notifyCourseDataChanged()
+                        loginButton?.setButtonEnabled(true)
+                        loginButton?.text = "进入课程表"
+                        showSchedulePage()
+                        return@runOnUiThread
+                    }
                     showLoginError(error)
                     loginButton?.setButtonEnabled(true)
                     loginButton?.text = "进入课程表"
@@ -1583,6 +1604,7 @@ class MainActivity : ComponentActivity() {
             }
         }
         radialSwitcher = radial
+        radial.visibility = if (viewingPublicSchedule) View.GONE else View.VISIBLE
         val radialLayoutParams = FrameLayout.LayoutParams(
             dp(220), dp(220), Gravity.BOTTOM or Gravity.END
         ).apply {
@@ -3466,6 +3488,9 @@ class MainActivity : ComponentActivity() {
                             remote.weeks
                         )
                     }
+                if (coursesFromSystem.isEmpty() && hasCourseCache(account, term)) {
+                    throw CourseScheduleNotPublishedException()
+                }
                 runOnUiThread {
                     if (
                         requestGeneration != scheduleRefreshGeneration ||
@@ -3491,11 +3516,19 @@ class MainActivity : ComponentActivity() {
                         sessionGeneration != academicSessionGeneration ||
                         !isActiveAcademicSession(account, term)
                     ) return@runOnUiThread
-                    showLiquidToast(
-                        message = "课表更新失败：${error.message ?: "未知错误"}",
-                        visual = LiquidToastVisual.ERROR,
-                        durationMillis = 3_000L
-                    )
+                    if (error is CourseScheduleNotPublishedException && hasCourseCache(account, term)) {
+                        showLiquidToast(
+                            message = "教务系统当前不可用",
+                            visual = LiquidToastVisual.TEXT,
+                            durationMillis = 2_800L
+                        )
+                    } else {
+                        showLiquidToast(
+                            message = "课表更新失败：${error.message ?: "未知错误"}",
+                            visual = LiquidToastVisual.ERROR,
+                            durationMillis = 3_000L
+                        )
+                    }
                 }
             } finally {
                 runOnUiThread {

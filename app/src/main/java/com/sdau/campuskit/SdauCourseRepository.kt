@@ -35,6 +35,9 @@ data class RemoteCourse(
     val courseCode: String = ""
 )
 
+class CourseScheduleNotPublishedException :
+    IllegalStateException("课表暂未公布，不能查看课表！")
+
 data class RemotePublicCourse(
     val college: String,
     val grade: String,
@@ -239,9 +242,37 @@ class SdauCourseRepository {
         } catch (error: Exception) {
             throw IllegalStateException("已选课结果解析失败：${error.message ?: "返回数据格式异常"}", error)
         }
-        val personal = runCatching {
-            parsePersonalTimetable(request("/xskb/xskb_list.do?viweType=0&xnxq01id=" + URLEncoder.encode(term, "UTF-8"), "GET", null))
-        }.getOrDefault(emptyList())
+        val bootstrapPath = "/xskb/xskb_list.do?viweType=0&xnxq01id=" +
+            URLEncoder.encode(term, "UTF-8")
+        val bootstrapHtml = requestStage("读取个人课表") {
+            request(bootstrapPath, "GET", null)
+        }
+        ensurePersonalTimetableAvailable(bootstrapHtml)
+        val timetableToken = htmlControlValue(bootstrapHtml, "kbjcmsid")
+        val timetableHtml = if (timetableToken.isBlank()) {
+            bootstrapHtml
+        } else {
+            val timetablePath = buildString {
+                append("/xskb/xskb_list.do?viweType=0")
+                append("&showallprint=0&showkchprint=0&showkink=0&showfzmprint=0")
+                append("&baseUrl=")
+                append("&xsflMapListJsonStr=")
+                append(URLEncoder.encode("讲课,实验,实践,上机,讨论,", "UTF-8"))
+                append("&xnxq01id=")
+                append(URLEncoder.encode(term, "UTF-8"))
+                append("&zc=")
+                append("&kbjcmsid=")
+                append(URLEncoder.encode(timetableToken, "UTF-8"))
+            }
+            requestStage("读取个人课表详情") {
+                request(timetablePath, "GET", null)
+            }
+        }
+        ensurePersonalTimetableAvailable(timetableHtml)
+        val personal = parsePersonalTimetable(timetableHtml)
+        if (selected.isNotEmpty() && personal.isEmpty()) {
+            throw CourseScheduleNotPublishedException()
+        }
         return selected.map { course ->
             val weeks = findPersonalWeeks(course, personal)
             if (weeks.isBlank()) course else course.copy(weeks = weeks)
@@ -887,6 +918,16 @@ class SdauCourseRepository {
         return body.contains("请先登录系统") ||
             body.contains("欢迎登录教务系统") ||
             (body.contains("LoginToXk") && body.contains("userAccount"))
+    }
+
+    private fun ensurePersonalTimetableAvailable(html: String) {
+        val timetableText = Jsoup.parse(html).text().replace(Regex("\\s+"), "")
+        if (
+            timetableText.contains("课表暂未公布") ||
+            timetableText.contains("不能查看课表")
+        ) {
+            throw CourseScheduleNotPublishedException()
+        }
     }
 
     private fun parseTrainingPlan(body: String): RemoteTrainingPlanResult {
