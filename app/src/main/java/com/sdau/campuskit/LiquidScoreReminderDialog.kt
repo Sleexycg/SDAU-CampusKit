@@ -30,8 +30,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -63,27 +61,21 @@ internal class LiquidScoreReminderDialogView(
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         isClickable = true
         addView(
-            ComposeView(context).apply {
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setCampusContent {
-                    LiquidScoreReminderDialog(
-                        pageSnapshot = pageSnapshot,
-                        enabled = enabled,
-                        statusProvider = statusProvider,
-                        onToggle = onToggle,
-                        onDismiss = onDismiss
-                    )
-                }
+            composeHostView(context) {
+                LiquidScoreReminderDialog(
+                    pageSnapshot = pageSnapshot,
+                    enabled = enabled,
+                    statusProvider = statusProvider,
+                    onToggle = onToggle,
+                    onDismiss = onDismiss
+                )
             },
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         )
     }
 
     fun releaseSnapshot() {
-        val bitmap = pageSnapshot
-        pageSnapshot = null
-        if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
+        releaseDialogSnapshot(pageSnapshot) { pageSnapshot = null }
     }
 }
 

@@ -5,11 +5,8 @@ import android.graphics.Bitmap
 import android.os.SystemClock
 import android.widget.FrameLayout
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.MutatorMutex
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -62,10 +59,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -259,23 +254,19 @@ internal class LiquidBackgroundEditorView(
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         isClickable = true
         addView(
-            ComposeView(context).apply {
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setCampusContent {
-                    val bitmap = sourceBitmap ?: return@setCampusContent
-                    BackgroundEditorScreen(
-                        sourceBitmap = bitmap,
-                        source = bitmap.asImageBitmap(),
-                        initialClarity = initialClarity,
-                        initialCrop = initialCrop,
-                        panelVisible = panelVisibleState.value,
-                        applyToastState = applyToastState.value,
-                        onPreview = onPreview,
-                        onCancel = onCancel,
-                        onApply = onApply
-                    )
-                }
+            composeHostView(context) {
+                val bitmap = sourceBitmap ?: return@composeHostView
+                BackgroundEditorScreen(
+                    sourceBitmap = bitmap,
+                    source = bitmap.asImageBitmap(),
+                    initialClarity = initialClarity,
+                    initialCrop = initialCrop,
+                    panelVisible = panelVisibleState.value,
+                    applyToastState = applyToastState.value,
+                    onPreview = onPreview,
+                    onCancel = onCancel,
+                    onApply = onApply
+                )
             },
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         )

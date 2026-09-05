@@ -3,7 +3,6 @@ package com.sdau.campuskit
 import android.content.Context
 import android.graphics.Bitmap
 import android.widget.FrameLayout
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -34,9 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -51,11 +48,6 @@ import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.shapes.RoundedRectangle
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 
 internal sealed interface GradeExamUiState {
     data object Loading : GradeExamUiState
@@ -341,18 +333,10 @@ private fun GradeExamMessageCard(backdrop: Backdrop, content: @Composable Column
 
 @Composable
 private fun GradeExamSpinner() {
-    val transition = rememberInfiniteTransition(label = "gradeExamLoading")
-    val rotation by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
-        label = "gradeExamLoadingRotation"
+    CampusLoadingSpinner(
+        label = "gradeExamLoading",
+        rotationLabel = "gradeExamLoadingRotation"
     )
-    val accent = CampusComposeTheme.colors.accent
-    Canvas(Modifier.size(38.dp)) {
-        drawArc(accent.copy(alpha = 0.22f), 0f, 360f, false, style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
-        drawArc(accent, rotation, 102f, false, style = Stroke(4.dp.toPx(), cap = StrokeCap.Round))
-    }
 }
 
 private fun gradeExamScoreColor(record: RemoteGradeExam, dark: Boolean): Color {

@@ -2,7 +2,6 @@ package com.sdau.campuskit
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.view.View
 import android.widget.FrameLayout
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -13,10 +12,6 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -55,7 +50,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
@@ -779,30 +773,10 @@ private fun TrainingPlanMessageCard(
 
 @Composable
 private fun TrainingPlanSpinner() {
-    val transition = rememberInfiniteTransition(label = "trainingPlanLoading")
-    val rotation by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
-        label = "trainingPlanLoadingRotation"
+    CampusLoadingSpinner(
+        label = "trainingPlanLoading",
+        rotationLabel = "trainingPlanLoadingRotation"
     )
-    val accent = CampusComposeTheme.colors.accent
-    Canvas(Modifier.size(38.dp)) {
-        drawArc(
-            color = accent.copy(alpha = 0.22f),
-            startAngle = 0f,
-            sweepAngle = 360f,
-            useCenter = false,
-            style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-        )
-        drawArc(
-            color = accent,
-            startAngle = rotation,
-            sweepAngle = 102f,
-            useCenter = false,
-            style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-        )
-    }
 }
 
 private fun trainingPlanCategoryColor(category: String, dark: Boolean): Color {

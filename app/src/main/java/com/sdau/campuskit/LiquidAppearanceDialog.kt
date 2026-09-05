@@ -49,10 +49,8 @@ import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.role
@@ -95,27 +93,21 @@ internal class LiquidAppearanceDialogView(
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         isClickable = true
         addView(
-            ComposeView(context).apply {
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setCampusContent {
-                    LiquidAppearanceDialog(
-                        pageSnapshot = pageSnapshot,
-                        initialMode = initialMode,
-                        initialSystemDark = initialSystemDark,
-                        onApply = onApply,
-                        onDismiss = onDismiss
-                    )
-                }
+            composeHostView(context) {
+                LiquidAppearanceDialog(
+                    pageSnapshot = pageSnapshot,
+                    initialMode = initialMode,
+                    initialSystemDark = initialSystemDark,
+                    onApply = onApply,
+                    onDismiss = onDismiss
+                )
             },
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         )
     }
 
     fun releaseSnapshot() {
-        val bitmap = pageSnapshot
-        pageSnapshot = null
-        if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
+        releaseDialogSnapshot(pageSnapshot) { pageSnapshot = null }
     }
 }
 

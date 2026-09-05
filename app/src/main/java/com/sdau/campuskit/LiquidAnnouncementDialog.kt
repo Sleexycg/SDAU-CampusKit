@@ -25,8 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,27 +51,21 @@ internal class LiquidAnnouncementDialogView(
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
         isClickable = true
         addView(
-            ComposeView(context).apply {
-                setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setCampusContent {
-                    LiquidAnnouncementDialog(
-                        pageSnapshot = pageSnapshot,
-                        announcement = announcement,
-                        onCancel = onCancel,
-                        onConfirm = onConfirm,
-                        onOpenUrl = onOpenUrl
-                    )
-                }
+            composeHostView(context) {
+                LiquidAnnouncementDialog(
+                    pageSnapshot = pageSnapshot,
+                    announcement = announcement,
+                    onCancel = onCancel,
+                    onConfirm = onConfirm,
+                    onOpenUrl = onOpenUrl
+                )
             },
             LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
         )
     }
 
     fun releaseSnapshot() {
-        val bitmap = pageSnapshot
-        pageSnapshot = null
-        if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
+        releaseDialogSnapshot(pageSnapshot) { pageSnapshot = null }
     }
 }
 

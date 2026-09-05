@@ -1,14 +1,9 @@
 package com.sdau.campuskit
 
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
-import java.net.CookieManager
-import java.net.CookiePolicy
 import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
-import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
@@ -239,103 +234,4 @@ internal class DormElectricityRepository {
         }
     }
 
-    private fun downloadPaymentQr(paymentUrl: String): ByteArray {
-        val cookieManager = CookieManager(null, CookiePolicy.ACCEPT_ALL)
-        // These browser-style %uXXXX values are covered by CCB's MAC. Keep the
-        // school-provided URL intact and only sanitize the URI used for cookies.
-        val paymentPage = getWebResponse(URL(paymentUrl), cookieManager)
-        val source = findQrSource(decodePaymentHtml(paymentPage.bytes))
-            ?: throw IllegalStateException("未能从学校缴费页面读取充值二维码")
-        val bytes = getWebResponse(
-            url = URL(paymentPage.finalUrl, source),
-            cookieManager = cookieManager,
-            referer = paymentPage.finalUrl
-        ).bytes
-        if (bytes.isEmpty()) throw IllegalStateException("充值二维码下载失败")
-        return bytes
-    }
-
-    private data class WebResponse(val bytes: ByteArray, val finalUrl: URL)
-
-    private fun getWebResponse(
-        url: URL,
-        cookieManager: CookieManager,
-        referer: URL? = null
-    ): WebResponse {
-        var currentUrl = url
-        var currentReferer = referer
-        repeat(8) {
-            val connection = (currentUrl.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 15_000
-                readTimeout = 20_000
-                instanceFollowRedirects = false
-                useCaches = false
-                setRequestProperty("Accept", "text/html,application/xhtml+xml,image/avif,image/webp,image/*,*/*;q=0.8")
-                setRequestProperty("Accept-Language", "zh-CN,zh;q=0.9")
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36")
-                currentReferer?.let { setRequestProperty("Referer", it.toExternalForm()) }
-                cookieManager.get(cookieUri(currentUrl), emptyMap())["Cookie"]?.forEach {
-                    addRequestProperty("Cookie", it)
-                }
-            }
-            try {
-                val responseCode = connection.responseCode
-                cookieManager.put(
-                    cookieUri(currentUrl),
-                    connection.headerFields.filterKeys { it != null }
-                )
-                if (responseCode in 300..399) {
-                    val location = connection.getHeaderField("Location")
-                        ?: throw IllegalStateException("缴费平台返回了无效的跳转地址")
-                    currentReferer = currentUrl
-                    currentUrl = URL(currentUrl, location)
-                    return@repeat
-                }
-                if (responseCode !in 200..299) {
-                    throw IllegalStateException("缴费平台请求失败（$responseCode）")
-                }
-                val bytes = connection.inputStream.use { input ->
-                    val output = ByteArrayOutputStream()
-                    input.copyTo(output)
-                    output.toByteArray()
-                }
-                return WebResponse(bytes, currentUrl)
-            } finally {
-                connection.disconnect()
-            }
-        }
-        throw IllegalStateException("缴费平台跳转次数过多")
-    }
-
-    private fun cookieUri(url: URL): URI = URI(
-        url.protocol,
-        null,
-        url.host,
-        url.port,
-        url.path.ifBlank { "/" },
-        null,
-        null
-    )
-
-    private fun decodePaymentHtml(bytes: ByteArray): String {
-        val utf8 = bytes.toString(StandardCharsets.UTF_8)
-        return if ('\uFFFD' in utf8) bytes.toString(Charset.forName("GB18030")) else utf8
-    }
-
-    private fun findQrSource(html: String): String? {
-        val normalized = html
-            .replace("\\/", "/")
-            .replace(Regex("\\\\u0026", RegexOption.IGNORE_CASE), "&")
-            .replace("&amp;", "&")
-        val patterns = listOf(
-            Regex("""<img[^>]*\bsrc\s*=\s*[\"']([^\"']*QrcodeServlet[^\"']*)[\"']""", RegexOption.IGNORE_CASE),
-            Regex("""[\"']([^\"']*QrcodeServlet[^\"']*)[\"']""", RegexOption.IGNORE_CASE),
-            Regex("""((?:https?:)?//[^\s\"'<>]*QrcodeServlet[^\s\"'<>]*)""", RegexOption.IGNORE_CASE),
-            Regex("""(/CCBIS/QrcodeServlet\?[^\s\"'<>]+)""", RegexOption.IGNORE_CASE)
-        )
-        return patterns.firstNotNullOfOrNull { pattern ->
-            pattern.find(normalized)?.groupValues?.getOrNull(1)
-        }?.trim()
-    }
 }

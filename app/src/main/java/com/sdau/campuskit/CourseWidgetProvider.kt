@@ -12,7 +12,6 @@ import android.os.Bundle
 import android.view.View
 import android.widget.RemoteViews
 import org.json.JSONArray
-import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale

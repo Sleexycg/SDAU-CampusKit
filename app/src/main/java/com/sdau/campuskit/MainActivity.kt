@@ -40,7 +40,6 @@ import android.os.Looper
 import android.os.SystemClock
 import android.text.InputType
 import android.util.JsonWriter
-import android.util.TypedValue
 import android.view.Gravity
 import android.view.PixelCopy
 import android.view.HapticFeedbackConstants
@@ -61,7 +60,6 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Space
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.ProgressBar

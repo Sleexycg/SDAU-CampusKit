@@ -132,9 +132,7 @@ internal class LiquidAppToastView(
     }
 
     fun releaseSnapshot() {
-        val bitmap = pageSnapshot
-        pageSnapshot = null
-        if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
+        releaseDialogSnapshot(pageSnapshot) { pageSnapshot = null }
     }
 }
 
