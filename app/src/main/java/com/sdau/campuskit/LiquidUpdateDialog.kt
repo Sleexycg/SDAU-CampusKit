@@ -317,8 +317,8 @@ private fun DialogAction(
         style = style,
         enabled = enabled,
         allowDragDeformation = false,
-        deformationHorizontalPadding = 4.dp,
-        deformationVerticalPadding = 4.dp,
+        deformationHorizontalPadding = 0.dp,
+        deformationVerticalPadding = 0.dp,
         modifier = modifier,
         height = 48.dp
     ) {

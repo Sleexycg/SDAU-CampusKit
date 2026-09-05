@@ -182,8 +182,8 @@ private fun LiquidConfirmDialog(
                     style = LiquidButtonStyle.TINTED,
                     enabled = true,
                     allowDragDeformation = false,
-                    deformationHorizontalPadding = 4.dp,
-                    deformationVerticalPadding = 4.dp,
+                    deformationHorizontalPadding = 0.dp,
+                    deformationVerticalPadding = 0.dp,
                     modifier = Modifier.weight(1f),
                     height = 52.dp
                 ) {

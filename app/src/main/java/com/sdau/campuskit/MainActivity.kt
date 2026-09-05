@@ -31,6 +31,7 @@ import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.LayerDrawable
 import android.animation.ValueAnimator
+import android.media.MediaScannerConnection
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -254,13 +255,24 @@ class MainActivity : ComponentActivity() {
     private var publicOptionOverlay: LiquidPickerDialogView? = null
     private var appearanceOverlay: LiquidAppearanceDialogView? = null
     private var refreshScheduleConfirmOverlay: LiquidConfirmDialogView? = null
-    private var dormElectricityOverlay: LiquidConfirmDialogView? = null
+    private var dormElectricityOverlay: LiquidDormElectricityPageView? = null
+    private val dormElectricityRepository = DormElectricityRepository()
+    private val dormPaymentQrResolver by lazy { DormPaymentQrResolver(this) }
+    private val dormRechargeHistoryStore by lazy { DormRechargeHistoryStore(applicationContext) }
+    private var dormElectricityState = DormElectricityUiState()
+    private var dormElectricityRequestGeneration = 0
+    private var dormRechargeVerificationRunning = false
+    private var dormRechargeVerificationGeneration = 0
+    private var dormRechargeVerificationRunnable: Runnable? = null
+    private var pendingDormRechargeHistoryEntry: DormRechargeHistoryEntry? = null
     private var shareOverlay: View? = null
     private var actionMenuOverlay: LiquidActionMenuView? = null
     private var backgroundEditorOverlay: LiquidBackgroundEditorView? = null
     private var backgroundEditorPendingSource: File? = null
     private var backgroundEditorPreviewBitmap: Bitmap? = null
     private var updateOverlay: View? = null
+    private var announcementOverlay: LiquidAnnouncementDialogView? = null
+    private var pendingAnnouncementInfo: String? = null
     private var liquidToastOverlay: LiquidAppToastView? = null
     private var liquidToastCapturePending = false
     private var pendingLiquidToast: PendingLiquidToast? = null
@@ -270,6 +282,7 @@ class MainActivity : ComponentActivity() {
     private var forceUpdateActive = false
     private var updateDialogView: LiquidUpdateDialogView? = null
     private var updateDialogCapturePending = false
+    private var announcementDialogCapturePending = false
     private var pickerDialogCapturePending = false
     private var actionMenuCapturePending = false
     private var scoreTermMenuCapturePending = false
@@ -280,7 +293,6 @@ class MainActivity : ComponentActivity() {
     private var publicOptionPickerCapturePending = false
     private var appearanceCapturePending = false
     private var refreshScheduleConfirmCapturePending = false
-    private var dormElectricityCapturePending = false
     private var updateDownloadId: Long? = null
     private var updateDownloadReceiverRegistered = false
     private val updateDownloadReceiver = object : BroadcastReceiver() {
@@ -367,7 +379,9 @@ class MainActivity : ComponentActivity() {
         val name: String,
         val changelog: String,
         val url: String,
-        val forceUpdate: Boolean = false
+        val forceUpdate: Boolean = false,
+        val announcementEnabled: Boolean = false,
+        val announcementInfo: String = ""
     )
     private data class PendingLiquidToast(
         val message: String,
@@ -412,12 +426,21 @@ class MainActivity : ComponentActivity() {
         updateExecutor.execute {
             try {
                 val update = readRemoteUpdate() ?: return@execute
-                if (update.code <= currentVersionCode) return@execute
                 val preferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-                if (!update.forceUpdate && preferences.getInt(KEY_UPDATE_STARTED_CODE, 0) >= update.code) return@execute
-                pendingApkUrl = update.url
+                val shouldShowUpdate = update.code > currentVersionCode &&
+                    (update.forceUpdate || preferences.getInt(KEY_UPDATE_STARTED_CODE, 0) < update.code)
+                val announcement = update.announcementInfo.trim().takeIf {
+                    update.announcementEnabled && it.isNotEmpty() &&
+                        preferences.getString(KEY_CONFIRMED_ANNOUNCEMENT, "") != it
+                }
                 runOnUiThread {
-                    showUpdateDialog(update)
+                    pendingAnnouncementInfo = announcement
+                    if (shouldShowUpdate) {
+                        pendingApkUrl = update.url
+                        showUpdateDialog(update)
+                    } else {
+                        showPendingAnnouncement()
+                    }
                 }
             } catch (_: Exception) {
                 // 网络不可用时保持离线使用，不打扰课表页面。
@@ -447,7 +470,66 @@ class MainActivity : ComponentActivity() {
             }
             else -> json.optString("changelog", "")
         }
-        return RemoteUpdate(code, name, changelog, url, forceUpdate)
+        val announcementEnabled = json.optInt("ggkg", 0) != 0
+        val announcementInfo = json.optString("gginfo", "")
+        return RemoteUpdate(
+            code,
+            name,
+            changelog,
+            url,
+            forceUpdate,
+            announcementEnabled,
+            announcementInfo
+        )
+    }
+
+    private fun showPendingAnnouncement() {
+        val info = pendingAnnouncementInfo?.takeIf { it.isNotBlank() } ?: return
+        if (updateOverlay != null || announcementOverlay != null || announcementDialogCapturePending) return
+        announcementDialogCapturePending = true
+        captureUpdateBackdrop { pageSnapshot ->
+            announcementDialogCapturePending = false
+            if (isFinishing || isDestroyed || updateOverlay != null || announcementOverlay != null) {
+                pageSnapshot?.takeUnless(Bitmap::isRecycled)?.recycle()
+                return@captureUpdateBackdrop
+            }
+            lateinit var dialog: LiquidAnnouncementDialogView
+            dialog = LiquidAnnouncementDialogView(
+                context = this,
+                pageSnapshot = pageSnapshot,
+                announcement = info,
+                onCancel = { hideAnnouncementDialog() },
+                onConfirm = {
+                    getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                        .putString(KEY_CONFIRMED_ANNOUNCEMENT, info)
+                        .apply()
+                    pendingAnnouncementInfo = null
+                    hideAnnouncementDialog()
+                },
+                onOpenUrl = ::openAnnouncementUrl
+            )
+            pageHost.addView(dialog, matchParentParams())
+            announcementOverlay = dialog
+            dialog.alpha = 0f
+            dialog.animate().alpha(1f).setDuration(180).start()
+        }
+    }
+
+    private fun openAnnouncementUrl(url: String) {
+        runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }.onFailure {
+            showLiquidToast("无法打开公告链接", LiquidToastVisual.ERROR)
+        }
+    }
+
+    private fun hideAnnouncementDialog() {
+        val overlay = announcementOverlay ?: return
+        overlay.animate().alpha(0f).setDuration(140).withEndAction {
+            pageHost.removeView(overlay)
+            overlay.releaseSnapshot()
+            if (announcementOverlay === overlay) announcementOverlay = null
+        }.start()
     }
 
     private fun downloadLatestApk(
@@ -616,12 +698,12 @@ class MainActivity : ComponentActivity() {
                 versionName = versionName,
                 changelog = changelogText,
                 forced = update.forceUpdate,
-                onDismiss = { hideUpdateDialog() },
+                onDismiss = { hideUpdateDialog(showPendingAnnouncement = true) },
                 onUpdate = updateAction@{
                     if (!requestInstallPermissionIfNeeded()) return@updateAction
                     dialog.setDownloading(true)
                     downloadLatestApk(update.url, update.code, update.name)
-                    if (!update.forceUpdate) hideUpdateDialog()
+                    if (!update.forceUpdate) hideUpdateDialog(showPendingAnnouncement = false)
                 }
             )
             pageHost.addView(dialog, matchParentParams())
@@ -777,7 +859,7 @@ class MainActivity : ComponentActivity() {
         liquidToastOverlay = null
     }
 
-    private fun hideUpdateDialog() {
+    private fun hideUpdateDialog(showPendingAnnouncement: Boolean = true) {
         val overlay = updateOverlay ?: return
         overlay.animate().alpha(0f).setDuration(140).withEndAction {
             pageHost.removeView(overlay)
@@ -785,6 +867,7 @@ class MainActivity : ComponentActivity() {
             updateOverlay = null
             updateDialogView = null
             forceUpdateActive = false
+            if (showPendingAnnouncement) showPendingAnnouncement()
         }.start()
     }
 
@@ -1407,6 +1490,18 @@ class MainActivity : ComponentActivity() {
             ?: ""
     }
 
+    private fun savedPublicOption(key: String): String =
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(key, "").orEmpty()
+
+    private fun saveLastPublicScheduleSelection() {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(KEY_PUBLIC_LAST_COLLEGE, publicCollegeSelection)
+            .putString(KEY_PUBLIC_LAST_GRADE, publicGradeSelection)
+            .putString(KEY_PUBLIC_LAST_MAJOR, publicMajorSelection)
+            .putString(KEY_PUBLIC_LAST_CLASS, publicClassSelection)
+            .apply()
+    }
+
     private fun buildPublicFilterFields(body: LinearLayout, term: String) {
         val index = loadStoredPublicScheduleIndex(term)
         if (index == null) {
@@ -1422,19 +1517,35 @@ class MainActivity : ComponentActivity() {
             return
         }
         val colleges = index.hierarchy.keys.sorted()
-        val college = choosePublicOption(publicCollegeSelection, colleges, listOf("农学院"))
+        val college = choosePublicOption(
+            publicCollegeSelection,
+            colleges,
+            listOf(savedPublicOption(KEY_PUBLIC_LAST_COLLEGE), "农学院")
+        )
         val gradeMap = index.hierarchy[college].orEmpty()
         val grades = gradeMap.keys.sorted()
-        val grade = choosePublicOption(publicGradeSelection, grades, listOf("2026级"))
+        val grade = choosePublicOption(
+            publicGradeSelection,
+            grades,
+            listOf(savedPublicOption(KEY_PUBLIC_LAST_GRADE), "2026级")
+        )
         val majorMap = gradeMap[grade].orEmpty()
         val majors = majorMap.keys.sorted()
         val major = choosePublicOption(
             publicMajorSelection,
             majors,
-            listOf("农业（拔尖基地班）", "农学（拔尖基地班）")
+            listOf(
+                savedPublicOption(KEY_PUBLIC_LAST_MAJOR),
+                "农业（拔尖基地班）",
+                "农学（拔尖基地班）"
+            )
         )
         val classes = majorMap[major].orEmpty().sorted()
-        val className = choosePublicOption(publicClassSelection, classes, listOf("农基2601"))
+        val className = choosePublicOption(
+            publicClassSelection,
+            classes,
+            listOf(savedPublicOption(KEY_PUBLIC_LAST_CLASS), "农基2601")
+        )
 
         loginUiState.resolvePublicSelection(college, grade, major, className)
 
@@ -1514,6 +1625,7 @@ class MainActivity : ComponentActivity() {
         publicScheduleTerm = term
         publicScheduleLabel = "$publicCollegeSelection · $publicGradeSelection · $publicMajorSelection · $publicClassSelection"
         publicScheduleClassName = publicClassSelection
+        saveLastPublicScheduleSelection()
         viewingPublicSchedule = true
         currentWeek = weekForTerm(term)
         showSchedulePage()
@@ -1600,7 +1712,7 @@ class MainActivity : ComponentActivity() {
             when (action) {
                 CampusRadialQuickAction.TRAINING_PLAN -> showTrainingPlanPage()
                 CampusRadialQuickAction.GRADE_EXAM -> showGradeExamPage()
-                CampusRadialQuickAction.DORM_ELECTRICITY -> showDormElectricityUnavailableDialog()
+                CampusRadialQuickAction.DORM_ELECTRICITY -> showDormElectricityPage()
             }
         }
         radialSwitcher = radial
@@ -3401,40 +3513,615 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
 
-    private fun showDormElectricityUnavailableDialog() {
-        if (dormElectricityOverlay != null || dormElectricityCapturePending) return
-        dormElectricityCapturePending = true
-        captureUpdateBackdrop { pageSnapshot ->
-            dormElectricityCapturePending = false
-            if (isFinishing || isDestroyed || dormElectricityOverlay != null) {
-                pageSnapshot?.takeUnless(Bitmap::isRecycled)?.recycle()
-                return@captureUpdateBackdrop
+    private fun showDormElectricityPage() {
+        if (dormElectricityOverlay != null) return
+        lateinit var page: LiquidDormElectricityPageView
+        page = LiquidDormElectricityPageView(
+            context = this,
+            pageBackgroundBitmap = currentPageBackgroundBitmap,
+            pageBackgroundScrim = customBackgroundScrimColor(),
+            textPalette = scheduleTextPalette,
+            onBack = { hideDormElectricityPage() },
+            onRefresh = {
+                dormElectricityPreferences().edit().clear().apply()
+                loadDormCampuses(
+                    restoreSelection = false,
+                    preferredCampusLabel = inferDormCampusFromSchedule()
+                )
+            },
+            onCampusSelected = ::selectDormCampus,
+            onBuildingSelected = ::selectDormBuilding,
+            onRoomSelected = ::selectDormRoom,
+            onEquipmentSelected = ::selectDormEquipment,
+            onQuery = ::queryDormElectricity,
+            onRecharge = ::rechargeDormElectricity,
+            onSaveRechargeQr = ::saveDormRechargeQrToGallery,
+            onDeleteRechargeHistory = ::deleteDormRechargeHistory,
+            onCompleteRechargeQr = ::completeDormRechargeQr,
+            onCancelRechargeQr = ::cancelDormRechargeQr
+        )
+        dormElectricityOverlay = page
+        dormElectricityState = restoredDormElectricityState()
+        page.render(dormElectricityState)
+        pageHost.addView(page, matchParentParams())
+        page.alpha = 0f
+        page.animate().alpha(1f).setDuration(220L).start()
+        loadDormCampuses(restoreSelection = true)
+        networkExecutor.execute {
+            val history = dormRechargeHistoryStore.load()
+            runOnUiThread {
+                if (dormElectricityOverlay === page) {
+                    updateDormElectricityState { it.copy(rechargeHistory = history) }
+                }
             }
-            val dialog = LiquidConfirmDialogView(
-                context = this,
-                pageSnapshot = pageSnapshot,
-                title = "宿舍用电",
-                message = "此功能未开放",
-                cancelLabel = "",
-                confirmLabel = "知道了",
-                showCancel = false,
-                onDismiss = { hideDormElectricityUnavailableDialog() },
-                onConfirm = { hideDormElectricityUnavailableDialog() }
-            )
-            pageHost.addView(dialog, matchParentParams())
-            dormElectricityOverlay = dialog
-            dialog.alpha = 0f
-            dialog.animate().alpha(1f).setDuration(180).start()
         }
     }
 
-    private fun hideDormElectricityUnavailableDialog() {
+    private fun hideDormElectricityPage() {
         val overlay = dormElectricityOverlay ?: return
-        overlay.animate().alpha(0f).setDuration(140).withEndAction {
-            pageHost.removeView(overlay)
-            overlay.releaseSnapshot()
-            if (dormElectricityOverlay === overlay) dormElectricityOverlay = null
-        }.start()
+        dormElectricityOverlay = null
+        dormElectricityRequestGeneration++
+        dormRechargeVerificationGeneration++
+        dormRechargeVerificationRunnable?.let(window.decorView::removeCallbacks)
+        dormRechargeVerificationRunnable = null
+        dormRechargeVerificationRunning = false
+        pendingDormRechargeHistoryEntry = null
+        dormPaymentQrResolver.cancel()
+        overlay.animate()
+            .alpha(0f)
+            .setDuration(180L)
+            .withEndAction { pageHost.removeView(overlay) }
+            .start()
+    }
+
+    private fun updateDormElectricityState(transform: (DormElectricityUiState) -> DormElectricityUiState) {
+        dormElectricityState = transform(dormElectricityState)
+        dormElectricityOverlay?.render(dormElectricityState)
+    }
+
+    private fun deleteDormRechargeHistory(id: String) {
+        networkExecutor.execute {
+            val updated = dormRechargeHistoryStore.load().filterNot { it.id == id }
+            dormRechargeHistoryStore.save(updated)
+            runOnUiThread {
+                updateDormElectricityState { state ->
+                    state.copy(rechargeHistory = state.rechargeHistory.filterNot { it.id == id })
+                }
+            }
+        }
+    }
+
+    private fun dormElectricityPreferences() =
+        getSharedPreferences("dorm_electricity", MODE_PRIVATE)
+
+    private fun restoredDormElectricityState(): DormElectricityUiState {
+        val preferences = dormElectricityPreferences()
+        fun savedOption(codeKey: String, labelKey: String): DormElectricityOption? {
+            val code = preferences.getString(codeKey, null).orEmpty()
+            val label = preferences.getString(labelKey, null).orEmpty()
+            return if (code.isBlank() || label.isBlank()) null else DormElectricityOption(label, code)
+        }
+
+        val campus = savedOption("campus_code", "campus_label")
+        val building = savedOption("building_code", "building_label")
+        val room = savedOption("room_code", "room_label")
+        val equipmentTypes = if (campus != null && building != null) {
+            DormElectricityPolicy.equipmentTypes(campus.code, building.label)
+        } else {
+            DormElectricityPolicy.defaultTypes
+        }
+        val savedEquipment = savedOption("equipment_code", "equipment_label")
+        val equipment = equipmentTypes.firstOrNull { it.code == savedEquipment?.code }
+            ?: savedEquipment
+            ?: equipmentTypes.firstOrNull()
+        return DormElectricityUiState(
+            campuses = listOfNotNull(campus),
+            buildings = listOfNotNull(building),
+            rooms = listOfNotNull(room),
+            equipmentTypes = equipmentTypes,
+            campus = campus,
+            building = building,
+            room = room,
+            equipment = equipment,
+            loading = DormElectricityLoading.CAMPUSES
+        )
+    }
+
+    private fun loadDormCampuses(restoreSelection: Boolean, preferredCampusLabel: String? = null) {
+        val page = dormElectricityOverlay ?: return
+        val generation = ++dormElectricityRequestGeneration
+        updateDormElectricityState {
+            it.copy(loading = DormElectricityLoading.CAMPUSES, error = null, reading = null)
+        }
+        networkExecutor.execute {
+            val result = runCatching { dormElectricityRepository.loadCampuses() }
+            runOnUiThread {
+                if (generation != dormElectricityRequestGeneration || dormElectricityOverlay !== page) return@runOnUiThread
+                result.onSuccess { campuses ->
+                    if (campuses.isEmpty()) {
+                        updateDormElectricityState { it.copy(loading = null, error = "未获取到校区信息") }
+                        return@onSuccess
+                    }
+                    val preferences = dormElectricityPreferences()
+                    val savedCode = if (restoreSelection) preferences.getString("campus_code", null) else null
+                    val campus = campuses.firstOrNull { it.code == savedCode }
+                        ?: campuses.firstOrNull { it.label == preferredCampusLabel }
+                        ?: campuses.firstOrNull { it.code == "3" }
+                        ?: campuses.first()
+                    updateDormElectricityState { current ->
+                        val preserveSaved = restoreSelection && current.campus?.code == campus.code
+                        current.copy(
+                            campuses = campuses,
+                            campus = campus,
+                            buildings = if (preserveSaved) current.buildings else emptyList(),
+                            building = if (preserveSaved) current.building else null,
+                            rooms = if (preserveSaved) current.rooms else emptyList(),
+                            room = if (preserveSaved) current.room else null,
+                            loading = DormElectricityLoading.BUILDINGS,
+                            error = null,
+                            reading = null
+                        )
+                    }
+                    loadDormBuildings(campus, restoreSelection)
+                }.onFailure { error ->
+                    updateDormElectricityState {
+                        it.copy(loading = null, error = error.message ?: "校区信息加载失败")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun loadDormBuildings(campus: DormElectricityOption, restoreSelection: Boolean) {
+        val page = dormElectricityOverlay ?: return
+        val generation = ++dormElectricityRequestGeneration
+        updateDormElectricityState { current ->
+            val preserveSaved = restoreSelection && current.campus?.code == campus.code
+            current.copy(
+                campus = campus,
+                buildings = if (preserveSaved) current.buildings else emptyList(),
+                rooms = if (preserveSaved) current.rooms else emptyList(),
+                building = if (preserveSaved) current.building else null,
+                room = if (preserveSaved) current.room else null,
+                reading = null,
+                error = null,
+                loading = DormElectricityLoading.BUILDINGS
+            )
+        }
+        networkExecutor.execute {
+            val result = runCatching { dormElectricityRepository.loadBuildings(campus.code) }
+            runOnUiThread {
+                if (generation != dormElectricityRequestGeneration || dormElectricityOverlay !== page) return@runOnUiThread
+                result.onSuccess { buildings ->
+                    val preferences = dormElectricityPreferences()
+                    val savedCampus = preferences.getString("campus_code", null)
+                    val savedBuilding = if (restoreSelection && savedCampus == campus.code) {
+                        preferences.getString("building_code", null)
+                    } else null
+                    val building = buildings.firstOrNull { it.code == savedBuilding }
+                    updateDormElectricityState {
+                        it.copy(buildings = buildings, building = building, loading = null)
+                    }
+                    if (building != null) loadDormRooms(building, restoreSelection)
+                }.onFailure { error ->
+                    updateDormElectricityState {
+                        it.copy(loading = null, error = error.message ?: "楼栋信息加载失败")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun loadDormRooms(building: DormElectricityOption, restoreSelection: Boolean) {
+        val page = dormElectricityOverlay ?: return
+        val campus = dormElectricityState.campus ?: return
+        val generation = ++dormElectricityRequestGeneration
+        val equipmentTypes = DormElectricityPolicy.equipmentTypes(campus.code, building.label)
+        updateDormElectricityState { current ->
+            val preserveSaved = restoreSelection && current.building?.code == building.code
+            val restoredEquipment = equipmentTypes.firstOrNull {
+                it.code == current.equipment?.code
+            } ?: equipmentTypes.firstOrNull()
+            current.copy(
+                building = building,
+                rooms = if (preserveSaved) current.rooms else emptyList(),
+                room = if (preserveSaved) current.room else null,
+                equipmentTypes = equipmentTypes,
+                equipment = restoredEquipment,
+                reading = null,
+                error = null,
+                loading = DormElectricityLoading.ROOMS
+            )
+        }
+        networkExecutor.execute {
+            val result = runCatching { dormElectricityRepository.loadRooms(building.code) }
+            runOnUiThread {
+                if (generation != dormElectricityRequestGeneration || dormElectricityOverlay !== page) return@runOnUiThread
+                result.onSuccess { rooms ->
+                    val preferences = dormElectricityPreferences()
+                    val savedBuilding = preferences.getString("building_code", null)
+                    val savedRoom = if (restoreSelection && savedBuilding == building.code) {
+                        preferences.getString("room_code", null)
+                    } else null
+                    val room = rooms.firstOrNull { it.code == savedRoom }
+                    val savedEquipment = preferences.getString("equipment_code", null)
+                    val equipment = equipmentTypes.firstOrNull { it.code == savedEquipment }
+                        ?: equipmentTypes.firstOrNull()
+                    updateDormElectricityState {
+                        it.copy(rooms = rooms, room = room, equipment = equipment, loading = null)
+                    }
+                }.onFailure { error ->
+                    updateDormElectricityState {
+                        it.copy(loading = null, error = error.message ?: "房间信息加载失败")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun selectDormCampus(campus: DormElectricityOption) {
+        loadDormBuildings(campus, restoreSelection = false)
+    }
+
+    private fun selectDormBuilding(building: DormElectricityOption) {
+        loadDormRooms(building, restoreSelection = false)
+    }
+
+    private fun selectDormRoom(room: DormElectricityOption) {
+        updateDormElectricityState { it.copy(room = room, reading = null, error = null) }
+    }
+
+    private fun selectDormEquipment(equipment: DormElectricityOption) {
+        updateDormElectricityState { it.copy(equipment = equipment, reading = null, error = null) }
+    }
+
+    private fun queryDormElectricity() {
+        val page = dormElectricityOverlay ?: return
+        val campus = dormElectricityState.campus
+        val building = dormElectricityState.building
+        val room = dormElectricityState.room
+        val equipment = dormElectricityState.equipment
+        if (campus == null || building == null || room == null || equipment == null) {
+            updateDormElectricityState { it.copy(error = "请先选择校区、楼栋、房间和用电类型") }
+            return
+        }
+        persistDormSelection(campus, building, room, equipment)
+        val generation = ++dormElectricityRequestGeneration
+        updateDormElectricityState { it.copy(loading = DormElectricityLoading.QUERY, error = null) }
+        networkExecutor.execute {
+            val result = runCatching {
+                dormElectricityRepository.query(campus, building, room, equipment)
+            }
+            val updatedHistory = result.getOrNull()?.let { reading ->
+                reconcileDormRechargeHistory(campus, building, room, equipment, reading)
+            }
+            runOnUiThread {
+                if (generation != dormElectricityRequestGeneration || dormElectricityOverlay !== page) return@runOnUiThread
+                result.onSuccess { reading ->
+                    updateDormElectricityState {
+                        it.copy(
+                            reading = reading,
+                            rechargeHistory = updatedHistory ?: it.rechargeHistory,
+                            loading = null,
+                            error = null
+                        )
+                    }
+                }.onFailure { error ->
+                    updateDormElectricityState {
+                        it.copy(reading = null, loading = null, error = error.message ?: "剩余电量查询失败")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun rechargeDormElectricity(amount: Double) {
+        val page = dormElectricityOverlay ?: return
+        val campus = dormElectricityState.campus ?: return
+        val building = dormElectricityState.building ?: return
+        val room = dormElectricityState.room ?: return
+        val equipment = dormElectricityState.equipment ?: return
+        val beforeKwh = dormElectricityState.reading?.remainingKwh
+        dormRechargeVerificationGeneration++
+        dormRechargeVerificationRunnable?.let(window.decorView::removeCallbacks)
+        dormRechargeVerificationRunnable = null
+        pendingDormRechargeHistoryEntry = null
+        val generation = ++dormElectricityRequestGeneration
+        updateDormElectricityState {
+            it.copy(
+                loading = DormElectricityLoading.RECHARGE,
+                rechargeQr = null,
+                rechargeError = null
+            )
+        }
+        networkExecutor.execute {
+            val result = runCatching {
+                dormElectricityRepository.createRechargePayment(campus, building, room, equipment, amount)
+            }
+            runOnUiThread {
+                if (generation != dormElectricityRequestGeneration || dormElectricityOverlay !== page) return@runOnUiThread
+                result.onSuccess { payment ->
+                    dormPaymentQrResolver.resolve(payment) resolve@{ qrResult ->
+                        if (generation != dormElectricityRequestGeneration || dormElectricityOverlay !== page) {
+                            return@resolve
+                        }
+                        qrResult.onSuccess { qr ->
+                            val entry = DormRechargeHistoryEntry(
+                                location = "${campus.label}-${building.label}-${room.label}-${equipment.label}",
+                                campusCode = campus.code,
+                                buildingCode = building.code,
+                                roomCode = room.code,
+                                equipmentCode = equipment.code,
+                                amount = amount,
+                                createdAt = System.currentTimeMillis(),
+                                beforeKwh = beforeKwh
+                            )
+                            pendingDormRechargeHistoryEntry = entry
+                            updateDormElectricityState {
+                                it.copy(
+                                    loading = null,
+                                    rechargeQr = qr,
+                                    rechargeError = null
+                                )
+                            }
+                        }.onFailure { error ->
+                            pendingDormRechargeHistoryEntry = null
+                            updateDormElectricityState {
+                                it.copy(
+                                    loading = null,
+                                    rechargeQr = null,
+                                    rechargeError = error.message ?: "充值二维码生成失败"
+                                )
+                            }
+                        }
+                    }
+                }.onFailure { error ->
+                    pendingDormRechargeHistoryEntry = null
+                    updateDormElectricityState {
+                        it.copy(
+                            loading = null,
+                            rechargeQr = null,
+                            rechargeError = error.message ?: "充值二维码生成失败"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun cancelDormRechargeQr() {
+        pendingDormRechargeHistoryEntry = null
+        updateDormElectricityState {
+            it.copy(loading = null, rechargeQr = null, rechargeError = null)
+        }
+    }
+
+    private fun completeDormRechargeQr() {
+        val page = dormElectricityOverlay ?: return
+        val entry = pendingDormRechargeHistoryEntry
+        pendingDormRechargeHistoryEntry = null
+        updateDormElectricityState {
+            it.copy(loading = null, rechargeQr = null, rechargeError = null)
+        }
+        if (entry == null) return
+        networkExecutor.execute {
+            val updatedHistory = (listOf(entry) + dormRechargeHistoryStore.load())
+                .distinctBy { it.id }
+            dormRechargeHistoryStore.save(updatedHistory)
+            runOnUiThread {
+                if (dormElectricityOverlay !== page) return@runOnUiThread
+                updateDormElectricityState { it.copy(rechargeHistory = updatedHistory) }
+                scheduleDormRechargeVerification(delayMillis = 1_200L)
+            }
+        }
+    }
+
+    /**
+     * The school payment page has no reliable app callback. Treat the recharge as paid only
+     * after the queried balance has actually increased; failed/unfinished payments therefore
+     * leave both the visible balance and the history entry untouched.
+     */
+    private fun scheduleDormRechargeVerification(
+        delayMillis: Long = 0L,
+        attemptsRemaining: Int = 60
+    ) {
+        if (attemptsRemaining <= 0 || dormElectricityOverlay == null) return
+        val decor = window.decorView
+        dormRechargeVerificationRunnable?.let(decor::removeCallbacks)
+        val generation = dormRechargeVerificationGeneration
+        val task = Runnable {
+            dormRechargeVerificationRunnable = null
+            if (generation == dormRechargeVerificationGeneration) {
+                verifyPendingDormRecharge(attemptsRemaining)
+            }
+        }
+        dormRechargeVerificationRunnable = task
+        decor.postDelayed(task, delayMillis)
+    }
+
+    private fun verifyPendingDormRecharge(attemptsRemaining: Int) {
+        val page = dormElectricityOverlay ?: return
+        if (dormRechargeVerificationRunning) {
+            scheduleDormRechargeVerification(delayMillis = 1_000L, attemptsRemaining = attemptsRemaining)
+            return
+        }
+        val campus = dormElectricityState.campus ?: return
+        val building = dormElectricityState.building ?: return
+        val room = dormElectricityState.room ?: return
+        val equipment = dormElectricityState.equipment ?: return
+        val pending = dormRechargeHistoryStore.load().firstOrNull { entry ->
+            entry.afterKwh == null && entry.beforeKwh != null &&
+                entry.campusCode == campus.code && entry.buildingCode == building.code &&
+                entry.roomCode == room.code && entry.equipmentCode == equipment.code
+        } ?: return
+        val generation = dormRechargeVerificationGeneration
+        dormRechargeVerificationRunning = true
+        networkExecutor.execute {
+            val result = runCatching {
+                dormElectricityRepository.query(campus, building, room, equipment)
+            }
+            runOnUiThread {
+                dormRechargeVerificationRunning = false
+                if (generation != dormRechargeVerificationGeneration || dormElectricityOverlay !== page) {
+                    return@runOnUiThread
+                }
+                val reading = result.getOrNull()
+                if (reading != null) {
+                    val history = reconcileDormRechargeHistory(campus, building, room, equipment, reading)
+                    val confirmed = history.firstOrNull { it.id == pending.id }?.addedKwh != null
+                    if (confirmed) {
+                        updateDormElectricityState {
+                            it.copy(reading = reading, rechargeHistory = history, error = null)
+                        }
+                        return@runOnUiThread
+                    }
+                }
+                if (attemptsRemaining > 1) {
+                    scheduleDormRechargeVerification(
+                        delayMillis = 10_000L,
+                        attemptsRemaining = attemptsRemaining - 1
+                    )
+                }
+            }
+        }
+    }
+
+    private fun saveDormRechargeQrToGallery() {
+        val imageBytes = dormElectricityState.rechargeQr?.imageBytes?.copyOf() ?: return
+        if (
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                DORM_QR_SAVE_PERMISSION_REQUEST
+            )
+            return
+        }
+        networkExecutor.execute {
+            val result = runCatching { writeDormRechargeQrToGallery(imageBytes) }
+            runOnUiThread {
+                result.onSuccess {
+                    showLiquidToast(
+                        message = "支付码已保存到相册，请到建行APP中扫码充值",
+                        visual = LiquidToastVisual.SUCCESS,
+                        durationMillis = 3_200L
+                    )
+                }.onFailure {
+                    showLiquidToast(
+                        message = "支付码保存失败",
+                        visual = LiquidToastVisual.ERROR,
+                        durationMillis = 2_600L
+                    )
+                }
+            }
+        }
+    }
+
+    private fun writeDormRechargeQrToGallery(imageBytes: ByteArray) {
+        val timestamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.CHINA)
+            .format(Calendar.getInstance().time)
+        val displayName = "WeSDAU-电费支付码-$timestamp.png"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/WeSDAU")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                ?: error("无法创建支付码图片")
+            try {
+                contentResolver.openOutputStream(uri)?.use { output -> output.write(imageBytes) }
+                    ?: error("无法写入支付码图片")
+                contentResolver.update(
+                    uri,
+                    ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
+                    null,
+                    null
+                )
+            } catch (error: Exception) {
+                contentResolver.delete(uri, null, null)
+                throw error
+            }
+        } else {
+            val directory = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                "WeSDAU"
+            ).apply { check(exists() || mkdirs()) { "无法创建相册目录" } }
+            val file = File(directory, displayName)
+            file.outputStream().use { it.write(imageBytes) }
+            MediaScannerConnection.scanFile(
+                this,
+                arrayOf(file.absolutePath),
+                arrayOf("image/png"),
+                null
+            )
+        }
+    }
+
+    private fun persistDormSelection(
+        campus: DormElectricityOption,
+        building: DormElectricityOption,
+        room: DormElectricityOption,
+        equipment: DormElectricityOption
+    ) {
+        dormElectricityPreferences().edit()
+            .putString("campus_code", campus.code)
+            .putString("campus_label", campus.label)
+            .putString("building_code", building.code)
+            .putString("building_label", building.label)
+            .putString("room_code", room.code)
+            .putString("room_label", room.label)
+            .putString("equipment_code", equipment.code)
+            .putString("equipment_label", equipment.label)
+            .apply()
+    }
+
+    private fun inferDormCampusFromSchedule(): String {
+        var central = 0
+        var southeast = 0
+        var northwest = 0
+        loadCourseCache().forEach { course ->
+            val room = course.room.trim().removePrefix("@").uppercase()
+            when {
+                room.startsWith("19#") -> southeast++
+                room.startsWith("22#") || room.startsWith("21#") -> northwest++
+                room.firstOrNull() in setOf('N', 'W', 'S', 'E') -> central++
+            }
+        }
+        val best = maxOf(central, southeast, northwest)
+        return when {
+            best <= 0 -> "岱宗校区"
+            central == best -> "泮河校区中央区"
+            southeast == best -> "泮河校区东南区"
+            else -> "泮河校区西北区"
+        }
+    }
+
+    private fun reconcileDormRechargeHistory(
+        campus: DormElectricityOption,
+        building: DormElectricityOption,
+        room: DormElectricityOption,
+        equipment: DormElectricityOption,
+        reading: DormElectricityReading
+    ): List<DormRechargeHistoryEntry> {
+        val entries = dormRechargeHistoryStore.load().toMutableList()
+        val index = entries.indexOfFirst { entry ->
+            entry.afterKwh == null && entry.beforeKwh != null &&
+                entry.campusCode == campus.code && entry.buildingCode == building.code &&
+                entry.roomCode == room.code && entry.equipmentCode == equipment.code
+        }
+        if (index >= 0) {
+            val entry = entries[index]
+            val delta = reading.remainingKwh - (entry.beforeKwh ?: reading.remainingKwh)
+            if (delta > 0.001) {
+                entries[index] = entry.copy(afterKwh = reading.remainingKwh, addedKwh = delta)
+                dormRechargeHistoryStore.save(entries)
+            }
+        }
+        return entries.sortedByDescending { it.createdAt }
     }
 
     private fun refreshPersonalSchedule() {
@@ -3519,7 +4206,7 @@ class MainActivity : ComponentActivity() {
                     if (error is CourseScheduleNotPublishedException && hasCourseCache(account, term)) {
                         showLiquidToast(
                             message = "教务系统当前不可用",
-                            visual = LiquidToastVisual.TEXT,
+                            visual = LiquidToastVisual.ERROR,
                             durationMillis = 2_800L
                         )
                     } else {
@@ -5716,6 +6403,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == DORM_QR_SAVE_PERMISSION_REQUEST) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                saveDormRechargeQrToGallery()
+            } else {
+                showLiquidToast(
+                    message = "未获得相册权限，无法保存支付码",
+                    visual = LiquidToastVisual.ERROR,
+                    durationMillis = 2_600L
+                )
+            }
+            return
+        }
         if (requestCode != NOTIFICATION_PERMISSION_REQUEST) return
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
             if (pendingScoreUpdateEnable) {
@@ -6813,7 +7512,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (dormElectricityOverlay != null) {
-            hideDormElectricityUnavailableDialog()
+            hideDormElectricityPage()
             return
         }
         if (scoreDetailOverlay != null) {
@@ -6830,6 +7529,10 @@ class MainActivity : ComponentActivity() {
         }
         if (actionMenuOverlay != null) {
             hideActionMenu()
+            return
+        }
+        if (announcementOverlay != null) {
+            hideAnnouncementDialog()
             return
         }
         if (updateOverlay != null) {
@@ -8990,6 +9693,9 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         hideSystemNavigationBar()
+        if (dormElectricityOverlay != null) {
+            scheduleDormRechargeVerification(delayMillis = 350L, attemptsRemaining = 60)
+        }
         if (
             scoreUpdatesEnabled.value &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -9080,6 +9786,8 @@ class MainActivity : ComponentActivity() {
         clearLiquidToastImmediately()
         updateDialogView?.releaseSnapshot()
         updateDialogView = null
+        announcementOverlay?.releaseSnapshot()
+        announcementOverlay = null
         scoreDetailOverlay?.releaseSnapshot()
         scoreDetailOverlay = null
         trainingPlanRequestGeneration++
@@ -9098,8 +9806,9 @@ class MainActivity : ComponentActivity() {
         appearanceOverlay = null
         refreshScheduleConfirmOverlay?.releaseSnapshot()
         refreshScheduleConfirmOverlay = null
-        dormElectricityOverlay?.releaseSnapshot()
         dormElectricityOverlay = null
+        dormElectricityRequestGeneration++
+        dormPaymentQrResolver.dispose()
         (shareOverlay as? LiquidPickerDialogView)?.releaseSnapshot()
         actionMenuOverlay?.releaseSnapshot()
         backgroundEditorOverlay?.releaseBitmap()
@@ -9127,6 +9836,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val NOTIFICATION_PERMISSION_REQUEST = 3001
+        private const val DORM_QR_SAVE_PERMISSION_REQUEST = 3002
         private const val PREFS_NAME = "offline_login"
         private const val KEY_ACCOUNT = "account"
         private const val KEY_PASSWORD = "password"
@@ -9138,6 +9848,10 @@ class MainActivity : ComponentActivity() {
         private const val KEY_COURSES = "courses_cache"
         private const val KEY_PUBLIC_SCHEDULE_SYNCED_TERM = "public_schedule_synced_term"
         private const val KEY_PUBLIC_SCHEDULE_HASH_PREFIX = "public_schedule_sha256_"
+        private const val KEY_PUBLIC_LAST_COLLEGE = "public_last_college"
+        private const val KEY_PUBLIC_LAST_GRADE = "public_last_grade"
+        private const val KEY_PUBLIC_LAST_MAJOR = "public_last_major"
+        private const val KEY_PUBLIC_LAST_CLASS = "public_last_class"
         private const val KEY_SCORES = "scores_cache"
         private const val KEY_SCORES_PREFIX = "scores_cache_account"
         private const val SCORE_STATS_SCOPE = "all_terms_v2"
@@ -9147,6 +9861,7 @@ class MainActivity : ComponentActivity() {
         private const val KEY_DARK_COLOR_MAP = "dark_course_color_map"
         private const val KEY_PUSH_ENABLED = "push_enabled"
         private const val KEY_UPDATE_STARTED_CODE = "update_started_code"
+        private const val KEY_CONFIRMED_ANNOUNCEMENT = "confirmed_announcement"
         private const val KEY_CUSTOM_BACKGROUND = "custom_background"
         private const val KEY_CUSTOM_BACKGROUND_CLARITY = "custom_background_clarity"
         private const val KEY_CUSTOM_BACKGROUND_CROP_LEFT = "custom_background_crop_left"

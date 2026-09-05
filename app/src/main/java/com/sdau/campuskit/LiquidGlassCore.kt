@@ -135,6 +135,15 @@ internal fun QuietDialogAction(
                     Color(0xFFFAFAFA).copy(alpha = 0.20f)
                 }
             )
+            .border(
+                width = 1.dp,
+                color = if (themeColors.isDark) {
+                    Color.White.copy(alpha = 0.18f)
+                } else {
+                    Color(0xFF64748B).copy(alpha = 0.34f)
+                },
+                shape = Capsule()
+            )
             .clickable(
                 enabled = enabled,
                 interactionSource = null,
